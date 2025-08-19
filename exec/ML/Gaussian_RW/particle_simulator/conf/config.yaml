@@ -1,0 +1,15 @@
+defaults:
+  - override /hydra/launcher: joblib
+
+n_left : ???
+n_right: ???
+n_samples: 10
+
+hydra:
+  mode: 2
+  launcher:
+    n_jobs: 8
+  sweeper:
+    params:
+      n_left: range(1,2)
+      n_right: range(1,2)
