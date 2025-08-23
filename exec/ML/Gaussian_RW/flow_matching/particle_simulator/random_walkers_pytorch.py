@@ -13,7 +13,7 @@ def get_density(cell_centers, pos):
     pos = pos.unsqueeze(-1)
     pos = pos.expand((-1,ncells))
     # Get relative distance from cell centers
-    rel_dist = cell_centers - pos 
+    rel_dist = cell_centers - pos
     dens_i_1 = torch.abs(rel_dist) < 0.5*dx
     dens_i_2 = rel_dist == -0.5*dx
     dens_i = dens_i_1 + dens_i_2
@@ -196,7 +196,7 @@ def random_walk_v1(ncells, nmoves, dt, initial_pos,
     face_centers = torch.linspace(0,len_system,ncells+1)
     if periodic_boundary:
         particles[0,:] = initial_pos
-    density[0,:] = get_density(cell_centers,particles[0,:]) 
+    density[0,:] = get_density(cell_centers,particles[0,:])
 
     # std of jump
     jump_std = torch.tensor(dt)
@@ -259,7 +259,7 @@ def random_walk_v2(ncells, nmoves, dt, initial_pos,
                                          left_boundary,right_boundary)
         density = get_density(cell_centers,initial_pos)
 
-    return initial_pos, density, flux 
+    return initial_pos, density, flux
 
 
 # Always uniformly distributing at cell centers
