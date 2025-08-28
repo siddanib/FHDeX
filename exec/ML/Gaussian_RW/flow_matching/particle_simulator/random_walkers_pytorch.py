@@ -283,8 +283,8 @@ def get_well_initial_pos (ncells, par_per_cell,x_1,x_2,len_system=1.0):
     dx = len_system/ncells
     cell_centers = torch.linspace(0.5*dx,len_system-0.5*dx,ncells)
     # Range where initial number of particles is zero
-    x_1 = 0.25*len_system
-    x_2 = 0.75*len_system
+    x_1 *= len_system
+    x_2 *= len_system
     x_1_ind = torch.searchsorted(cell_centers,x_1)-1
     x_2_ind = torch.searchsorted(cell_centers,x_2)
     x_1_cc = cell_centers[x_1_ind]
