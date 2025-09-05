@@ -5,8 +5,8 @@ import math
 import torch
 import h5py
 ####### Local imports ################################
-from random_walkers_pytorch import random_walk_v2
-from random_walkers_pytorch import get_particle_positions
+from .random_walkers_pytorch import random_walk_v2
+from .random_walkers_pytorch import get_particle_positions
 #######################################################
 
 """
