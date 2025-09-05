@@ -1,0 +1,13 @@
+defaults:
+  - override /hydra/launcher: joblib
+
+n_scale: 51
+n_cells : 100
+par_per_cell : 5
+
+case_type:
+  value : 1
+
+n_total_particle_steps: 500
+
+n_samples: 20000
