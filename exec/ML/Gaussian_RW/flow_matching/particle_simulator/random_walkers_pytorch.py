@@ -319,6 +319,18 @@ def get_particle_positions (N_cell_tnsr, dx):
             pos_list.append(ptcls_cell)
     return torch.cat(pos_list)
 
+def update_density (dens_old, flux,
+                    left_boundary, right_boundary):
+
+    assert boundary_asserts(left_boundary, right_boundary)
+
+    right_flux = torch.zeros_like(dens_old)
+
+    right_flux[:-1] = flux[1:]
+    right_flux[-1]  = flux[0]
+
+    return dens_old + flux - right_flux
+
 if __name__ == "__main__":
     torch.set_default_device('cpu')
     #par_per_cell = 10
