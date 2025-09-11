@@ -48,7 +48,7 @@ def get_flux(face_centers, pos_0, jump, periodic_boundary):
 
     # particles going left to right
     cond_1_1 = (face_centers-pos_0) >= 0.
-    cond_1_2 = (face_centers-pos_1) <= 0.
+    cond_1_2 = (face_centers-pos_1) < 0.
     # Logical AND
     cond_1 = torch.logical_and(cond_1_1,cond_1_2)
     flux_Left_Right = torch.sum(cond_1,dim=0)
