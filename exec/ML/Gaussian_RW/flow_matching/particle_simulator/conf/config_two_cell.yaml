@@ -4,6 +4,7 @@ defaults:
 n_left : ???
 n_right: ???
 n_samples: 50000
+n_substeps: 1
 particles_at_cell_center: ???
 
 hydra:
@@ -12,6 +13,6 @@ hydra:
     n_jobs: 8
   sweeper:
     params:
-      n_left: range(0,51)
-      n_right: range(0,51)
-      particles_at_cell_center: range(0,4)
+      n_left: range(10,11)
+      n_right: range(10,11)
+      particles_at_cell_center: range(6,8)

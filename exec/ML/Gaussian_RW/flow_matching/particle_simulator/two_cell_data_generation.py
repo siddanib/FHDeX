@@ -90,7 +90,7 @@ def fhd_data_run (cfg):
                                           left_boundary, right_boundary,
                                           len_system = len_system)
             total_flux_data[itr,0] = flux[1]
-    else:
+    elif ptcls_at_cc == 3:
         print("Particles are Poisson uniformly initialized in the cell.")
         for itr in range(total_flux_data.size(0)):
             if N_left > 0:
@@ -101,6 +101,88 @@ def fhd_data_run (cfg):
             if N_right > 0:
                 n_right_p = int(np.random.poisson(N_right,1))
                 right_ptcls = torch.rand((n_right_p))*dx + dx
+            else:
+                right_ptcls = torch.empty((0,))
+
+            initial_pos = torch.cat((left_ptcls,right_ptcls))
+            _ , _ , flux = random_walk_v2(ncells, 1, dt, initial_pos,
+                                          left_boundary, right_boundary,
+                                          len_system = len_system)
+            total_flux_data[itr,0] = flux[1]
+    elif ptcls_at_cc == 4:
+        print("Substepping is used for particles with uniform spatial.")
+        n_substeps = cfg.n_substeps
+        for itr in range(total_flux_data.size(0)):
+            if N_left > 0:
+                left_ptcls = torch.rand((N_left))*dx
+            else:
+                left_ptcls = torch.empty((0,))
+            if N_right > 0:
+                right_ptcls = torch.rand((N_right))*dx + dx
+            else:
+                right_ptcls = torch.empty((0,))
+
+            initial_pos = torch.cat((left_ptcls,right_ptcls))
+            flux_total = torch.zeros((1,))
+            for _ in range(n_substeps):
+                initial_pos, _ , flux = random_walk_v2(ncells, 1,
+                                              dt/n_substeps,
+                                              initial_pos.clone(),
+                                              left_boundary, right_boundary,
+                                              len_system = len_system)
+                flux_total += flux[1]
+            total_flux_data[itr,0] = flux_total[0]
+    elif ptcls_at_cc == 5:
+        print("Substepping is used for particles with cell center.")
+        n_substeps = cfg.n_substeps
+        for itr in range(total_flux_data.size(0)):
+            if N_left > 0:
+                left_ptcls = torch.ones((N_left,))*0.5*dx
+            else:
+                left_ptcls = torch.empty((0,))
+            if N_right > 0:
+                right_ptcls = torch.ones((N_right))*0.5*dx + dx
+            else:
+                right_ptcls = torch.empty((0,))
+
+            initial_pos = torch.cat((left_ptcls,right_ptcls))
+            flux_total = torch.zeros((1,))
+            for _ in range(n_substeps):
+                initial_pos, _ , flux = random_walk_v2(ncells, 1,
+                                              dt/n_substeps,
+                                              initial_pos.clone(),
+                                              left_boundary, right_boundary,
+                                              len_system = len_system)
+                flux_total += flux[1]
+            total_flux_data[itr,0] = flux_total[0]
+    elif ptcls_at_cc == 6:
+        print("Particles are evenly placed in the cell.")
+        for itr in range(total_flux_data.size(0)):
+            if N_left > 0:
+                left_ptcls = torch.linspace(0., dx, N_left)
+            else:
+                left_ptcls = torch.empty((0,))
+            if N_right > 0:
+                right_ptcls = torch.linspace(0.,dx, N_right) + dx
+            else:
+                right_ptcls = torch.empty((0,))
+
+            initial_pos = torch.cat((left_ptcls,right_ptcls))
+            _ , _ , flux = random_walk_v2(ncells, 1, dt, initial_pos,
+                                          left_boundary, right_boundary,
+                                          len_system = len_system)
+            total_flux_data[itr,0] = flux[1]
+    else:
+        print("Particles are Poisson evenly spaced in the cell.")
+        for itr in range(total_flux_data.size(0)):
+            if N_left > 0:
+                n_left_p = int(np.random.poisson(N_left,1))
+                left_ptcls = torch.linspace(0.,dx,n_left_p)
+            else:
+                left_ptcls = torch.empty((0,))
+            if N_right > 0:
+                n_right_p = int(np.random.poisson(N_right,1))
+                right_ptcls = torch.linspace(0.,dx,n_right_p) + dx
             else:
                 right_ptcls = torch.empty((0,))
 
