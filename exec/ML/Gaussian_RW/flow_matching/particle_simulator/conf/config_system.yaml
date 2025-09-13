@@ -1,0 +1,11 @@
+defaults:
+  - override /hydra/launcher: joblib
+
+dataset_name : "uniform"
+par_per_cell : 10
+ncells : 100
+cfl: 0.01
+n_ensembles: 20000
+n_steps: 100
+
+n_thermalize_steps: 500000
