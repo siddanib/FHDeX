@@ -12,23 +12,56 @@ from hydra.utils import instantiate
 from hydra.core.hydra_config import HydraConfig
 #######################################################
 ####### Local imports ################################
-from .random_walkers_pytorch import random_walk_v2
-from .random_walkers_pytorch import get_particle_positions
-from .random_walkers_pytorch import get_well_initial_pos
-from .random_walkers_pytorch import get_density
+from random_walkers_pytorch import random_walk_v2
+from random_walkers_pytorch import random_walk_just_evolve
+from random_walkers_pytorch import get_particle_positions
+from random_walkers_pytorch import get_well_initial_pos
+from random_walkers_pytorch import get_uni_initial_pos
+from random_walkers_pytorch import get_density
 #######################################################
 
-torch.set_default_device('cuda')
+torch.set_default_device('cpu')
 
 @torch.no_grad()
 @hydra.main(version_base=None, config_path="./conf",
             config_name="config_spde")
 def fhd_model_run (cfg):
-    dx = 1.0/100
-    ncells = cfg.n_cells
+    dataset_name = cfg.dataset_name
+    assert dataset_name in ["uniform", "well", "reservoir"]
+    print("Creating "+dataset_name+" dataset")
+
     par_per_cell = cfg.par_per_cell
-    len_system=ncells*dx
-    dt = 0.03*dx*dx
+    ncells = cfg.ncells
+    num_par = par_per_cell*ncells
+    len_system=1.0
+    dx = len_system/ncells
+    dt = cfg.cfl*dx*dx # ensure <= 0.1*dx*dx
+    cell_centers = torch.linspace(0.5*dx,len_system-0.5*dx,ncells)
+
+    if dataset_name == "uniform":
+        left_boundary  = ["periodic", 0]
+        right_boundary = ["periodic", 0]
+        initial_pos = get_uni_initial_pos(ncells,par_per_cell,
+                                          len_system=len_system)
+    elif dataset_name == "well":
+        left_boundary  =["periodic", 0]
+        right_boundary = ["periodic", 0]
+        # x_1 and x_2 represent void region
+        initial_pos = get_well_initial_pos(ncells, par_per_cell,
+                                           x_1=0.25, x_2=0.75,
+                                           len_system=len_system)
+    elif dataset_name == "reservoir":
+        left_boundary  = ["put", 20]
+        right_boundary = ["ignore", 0]
+        initial_pos = get_uni_initial_pos(ncells,par_per_cell,
+                                          len_system=len_system)
+    else:
+        sys.exit(f"{dataset_name} dataset does not exist.")
+
+    # Re-evaluate average particles per cell
+    par_per_cell = torch.sum(get_density(cell_centers,initial_pos)).cpu().item()
+    par_per_cell /= ncells
+
     cell_centers = torch.linspace(0.5*dx,len_system-0.5*dx,ncells)
     left_boundary  = ["periodic", 0]
     right_boundary = ["periodic", 0]
@@ -36,9 +69,11 @@ def fhd_model_run (cfg):
     n_total_steps = cfg.n_total_particle_steps
     n_samples   = cfg.n_samples
 
-    initial_pos = get_well_initial_pos(ncells, par_per_cell,
-                                       x_1=0.25, x_2=0.75,
-                                       len_system=len_system)
+    # Evolve the initial position to remove transients
+    initial_pos = random_walk_just_evolve(ncells, cfg.n_thermalize_steps,
+                                          dt, initial_pos.clone(),
+                                          left_boundary, right_boundary,
+                                          len_system = len_system)
 
     initial_density = get_density(cell_centers,
                                   initial_pos.clone()).float()
@@ -102,10 +137,10 @@ def fhd_model_run (cfg):
     # Convert gauss data to Number of particles
     gauss_data_np *= dx
 
-    dataset_name = os.path.join(HydraConfig.get().runtime.output_dir,
-                                "ensembles_of_multi_steps")
+    save_file_name = os.path.join(HydraConfig.get().runtime.output_dir,
+                                  dataset_name)
 
-    with h5py.File(dataset_name+".h5", mode="w") as f:
+    with h5py.File(save_file_name+".h5", mode="w") as f:
         f.create_dataset("ground_truth_data", data=grnd_trth_np, dtype = np.float32)
         f.create_dataset("gauss_data"  , data=gauss_data_np, dtype = np.float32)
         f.create_dataset("dt", data=dt, dtype=float)
