@@ -6,19 +6,10 @@ def get_density(cell_centers, pos):
     # Evaluating density of particles
     # pos should be periodic boundary shifted
     ncells = torch.numel(cell_centers)
-    num_par = torch.numel(pos)
     dx = cell_centers[1]-cell_centers[0]
-    cell_centers = cell_centers.unsqueeze(0)
-    cell_centers = cell_centers.expand((num_par,-1))
-    pos = pos.unsqueeze(-1)
-    pos = pos.expand((-1,ncells))
-    # Get relative distance from cell centers
-    rel_dist = cell_centers - pos
-    dens_i_1 = torch.abs(rel_dist) < 0.5*dx
-    dens_i_2 = rel_dist == -0.5*dx
-    dens_i = dens_i_1 + dens_i_2
-    # Sum along dim = 0
-    density = torch.sum(dens_i,dim=0)
+    density, _ = torch.histogram(pos, bins=ncells,
+                                 range=(0.,cell_centers[-1]+0.5*dx),
+                                 density=False)
     return density
 
 # If flux at a face is positive, then net particles are moving from left to right
@@ -47,8 +38,8 @@ def get_flux(face_centers, pos_0, jump, periodic_boundary):
     pos_1 = pos_1.expand((-1,nfaces))
 
     # particles going left to right
-    cond_1_1 = (face_centers-pos_0) >= 0.
-    cond_1_2 = (face_centers-pos_1) < 0.
+    cond_1_1 = (face_centers-pos_0) > 0.
+    cond_1_2 = (face_centers-pos_1) <= 0.
     # Logical AND
     cond_1 = torch.logical_and(cond_1_1,cond_1_2)
     flux_Left_Right = torch.sum(cond_1,dim=0)
@@ -100,31 +91,36 @@ def apply_boundary_effects(new_pos,len_system,ncells,
         # lower bound
         new_pos = torch.where(new_pos < 0., new_pos + len_system, new_pos)
         # upper bound
-        new_pos = torch.where(new_pos >= len_system, new_pos - len_system, new_pos)
+        new_pos = torch.where(new_pos >= len_system,
+                              new_pos - len_system, new_pos)
         return new_pos
     # Coming here means non-periodic boundaries
     # Let us consider left boundary first
     dx = len_system/ncells
     if left_boundary[0] == "put":
-        # Create new_particles to put in first cell
-        put_ptcls = torch.rand(left_boundary[1])*dx
-        put_ptcls = torch.clamp(put_ptcls,1.0e-3*dx,0.999*dx)
         # Remove existing particles in the first cell
         new_pos = new_pos[new_pos > dx]
-        new_pos = torch.cat([new_pos,put_ptcls],dim=0)
+        n_poisson = int(np.random.poisson(lam=left_boundary[1], size=1))
+        if n_poisson > 0:
+            # Create new_particles to put in first cell
+            put_ptcls = torch.rand(n_poisson)*dx
+            put_ptcls = torch.clamp(put_ptcls,1.0e-3*dx,0.999*dx)
+            new_pos = torch.cat([new_pos,put_ptcls],dim=0)
     elif left_boundary[0] == "ignore":
         # Remove particles that are to the left of left boundary
         new_pos = new_pos[new_pos > 0.]
 
     # Now considering right boundary
     if right_boundary[0] == "put":
-        # Create new_particles to put in last cell
-        put_ptcls = torch.rand(right_boundary[1])*dx
-        put_ptcls = torch.clamp(put_ptcls,1.0e-3*dx,0.999*dx)
-        put_ptcls += (len_system-dx)
         # Remove existing particles in the last cell
         new_pos = new_pos[new_pos < len_system - dx]
-        new_pos = torch.cat([new_pos,put_ptcls],dim=0)
+        # Create new_particles to put in last cell
+        n_poisson = int(np.random.poisson(lam=right_boundary[1], size=1))
+        if n_poisson > 0:
+            put_ptcls = torch.rand(n_poisson)*dx
+            put_ptcls = torch.clamp(put_ptcls,1.0e-3*dx,0.999*dx)
+            put_ptcls += (len_system-dx)
+            new_pos = torch.cat([new_pos,put_ptcls],dim=0)
     elif right_boundary[0] == "ignore":
         # Remove particles that are to the right of right boundary
         new_pos = new_pos[new_pos < len_system]
@@ -237,6 +233,16 @@ def random_walk_v2(ncells, nmoves, dt, initial_pos,
     ##########################################
     periodic_boundary = boundary_asserts(left_boundary,right_boundary)
     ##########################################
+    # Apply boundary effects
+    initial_pos = apply_boundary_effects(initial_pos,len_system,ncells,
+                                     left_boundary,right_boundary)
+    if periodic_boundary:
+        # Tensor to keep track of flux;
+        # Periodic case one NON-UNIQUE boundary
+        flux = torch.zeros((ncells,))
+    else:
+        # All faces are unique in non-periodic case
+        flux = torch.zeros((ncells+1,))
     # ASSUMING SYSTEM IS OF UNIT LENGTH
     dx = len_system/ncells
     cell_centers = torch.linspace(0.5*dx,(ncells-0.5)*dx,ncells)
@@ -251,7 +257,7 @@ def random_walk_v2(ncells, nmoves, dt, initial_pos,
         jump = jump_std*torch.randn(num_par)
         # Clamp the jump to cell size
         jump = torch.clamp(jump,min=(-1+1e-6)*jump_lim,max=(1-1e-6)*jump_lim)
-        flux    = get_flux(face_centers,initial_pos,jump,periodic_boundary)
+        flux += get_flux(face_centers,initial_pos,jump,periodic_boundary)
         # Update particle position
         initial_pos += jump
         # Apply boundary effects
@@ -274,7 +280,7 @@ def get_initial_pos(ncells,par_per_cell,len_system=1.0):
 # Uniformly distributing along the entire system length
 def get_uni_initial_pos (ncells,par_per_cell,len_system=1.0):
     num_par = ncells*par_per_cell
-    initial_pos = torch.linspace(1e-9,len_system-1e-9,num_par)
+    initial_pos = torch.linspace(0.,len_system-1e-6,num_par)
     return initial_pos
 
 # Well-shaped distribution of particles
@@ -331,35 +337,61 @@ def update_density (dens_old, flux,
 
     return dens_old + flux - right_flux
 
+def test_get_density ():
+    ncells=20
+    len_system=1.0
+    dx = len_system/ncells
+    cell_centers = torch.linspace(0.5*dx,len_system-0.5*dx,ncells)
+    # Random cell distribution
+    N_cell_tnsr = torch.randint(low=0, high=51,
+                                size=(ncells,),dtype=torch.float32)
+    # particle creation
+    ptcl_pos = get_particle_positions(N_cell_tnsr, dx)
+    # Particle to density
+    density_eval = get_density(cell_centers, ptcl_pos)
+    # Check
+    assert torch.allclose(density_eval, N_cell_tnsr)
+    # Another check
+    par_per_cell = 10
+    ptcl_pos = get_uni_initial_pos(ncells, par_per_cell,
+                                   len_system)
+
+    density_eval = get_density(cell_centers, ptcl_pos)
+    assert torch.sum(density_eval) == ncells*par_per_cell
+
+def test_get_flux ():
+    par_per_cell = 10
+    ncells = 20
+    nmoves = 10
+    len_system=1.0
+    dx = len_system/ncells
+    dt = 0.03*dx*dx
+    left_boundary =  ["periodic",0]
+    right_boundary = ["periodic",0]
+    cell_centers = torch.linspace(0.5*dx,len_system-0.5*dx,ncells)
+    face_centers = torch.linspace(0,len_system,ncells+1)
+
+    initial_pos = get_uni_initial_pos(ncells, par_per_cell,
+                                      len_system)
+    old_density = get_density(cell_centers,initial_pos)
+
+    particles,new_density_1,flux = random_walk_v2(ncells,nmoves,dt,
+                                                  initial_pos,
+                                                  left_boundary,
+                                                  right_boundary,
+                                                  len_system=len_system)
+
+    new_density_2 = update_density(old_density, flux,
+                                   left_boundary, right_boundary)
+
+    new_density_3 = get_density(cell_centers, particles)
+
+    assert torch.allclose(new_density_3, new_density_1)
+    assert torch.allclose(new_density_1, new_density_2)
+    assert torch.allclose(new_density_2, new_density_3)
+
 if __name__ == "__main__":
     torch.set_default_device('cpu')
-    #par_per_cell = 10
-    #ncells = 100
-    #num_par = par_per_cell*ncells
-    #nmoves = 1
-    #len_system=1.0
-    #dx = len_system/ncells
-    #dt = 0.03*dx*dx
-    #left_boundary =  ["put",20]
-    #right_boundary = ["ignore",0]
-    #cell_centers = torch.linspace(0.5*dx,len_system-0.5*dx,ncells)
-    #face_centers = torch.linspace(0,len_system,ncells+1)
-    #initial_pos = get_linear_initial_pos(ncells,left_boundary[1],
-    #                                     1,len_system=len_system)
-    #density = get_density(cell_centers,initial_pos)
-    ##print(initial_pos)
-    #print(density)
-    #particles,density,flux = random_walk_v2(ncells,nmoves,dt,
-    #                                        initial_pos,
-    #                                        left_boundary,
-    #                                        right_boundary,
-    #                                        len_system=len_system)
-    ##print(particles)
-    #print(density)
-    #print(flux)
-    ncells=2
-    dx = 0.01
-    N_cell_tnsr = torch.randint(low=0, high=11,
-                                size=(ncells,),dtype=torch.float32)
-    ptcl_pos = get_particle_positions(N_cell_tnsr, dx)
-    print(ptcl_pos)
+    for _ in range(20):
+        test_get_density()
+        test_get_flux()

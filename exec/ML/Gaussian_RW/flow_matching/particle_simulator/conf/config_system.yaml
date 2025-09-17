@@ -1,11 +1,18 @@
 defaults:
   - override /hydra/launcher: joblib
 
-dataset_name : "uniform"
+dataset_name : "reservoir"
+left_boundary :
+  - "put"
+  - 10
+right_boundary:
+  - "put"
+  - 10
+
 par_per_cell : 10
 ncells : 100
-cfl: 0.01
-n_ensembles: 20000
-n_steps: 100
+cfl: 0.03
+n_ensembles: 100
+n_steps: 20000
 
-n_thermalize_steps: 500000
+n_thermalize_steps: 5000000

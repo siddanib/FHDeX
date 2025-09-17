@@ -50,8 +50,8 @@ def fhd_data_run (cfg):
                                            x_1=0.25, x_2=0.75,
                                            len_system=len_system)
     elif dataset_name == "reservoir":
-        left_boundary  = ["put", 20]
-        right_boundary = ["ignore", 0]
+        left_boundary  = list(cfg.left_boundary)
+        right_boundary = list(cfg.right_boundary)
         initial_pos = get_uni_initial_pos(ncells,par_per_cell,
                                           len_system=len_system)
     else:
