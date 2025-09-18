@@ -2,9 +2,27 @@ defaults:
   - override /hydra/launcher: joblib
 
 ncells : 100
-par_per_cell : 10
+par_per_cell : ???
 cfl: 0.03
-dataset_name : "uniform"
-n_total_particle_steps: 100
+# Name is sufficient for uniform dataset
+dataset:
+  name: ???
+  left_boundary:
+    - "put"
+    - ${par_per_cell}
+  right_boundary:
+    - "put"
+    - ${par_per_cell}
+n_total_particle_steps: 200
 n_samples: 20000
 n_thermalize_steps: 5000000
+same_ic: false
+
+hydra:
+  mode: 2
+  launcher:
+    n_jobs: 8
+  sweeper:
+    params:
+      par_per_cell: 1, 10, 50
+      dataset.name: uniform, reservoir
