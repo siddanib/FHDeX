@@ -13,16 +13,18 @@ dataset:
   right_boundary:
     - "put"
     - ${par_per_cell}
-n_total_particle_steps: 200
-n_samples: 20000
-n_thermalize_steps: 5000000
+n_total_particle_steps: 1000
+n_samples: 400
+n_thermalize_steps: 100000
 same_ic: false
+realizations: ???
 
 hydra:
   mode: 2
   launcher:
-    n_jobs: 8
+    n_jobs: 64
   sweeper:
     params:
       par_per_cell: 1, 10, 50
       dataset.name: uniform, reservoir
+      realizations: range(0, 50)

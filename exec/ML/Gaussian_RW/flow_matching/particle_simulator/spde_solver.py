@@ -69,7 +69,7 @@ def fhd_model_run (cfg):
     n_total_steps = cfg.n_total_particle_steps
     n_samples   = cfg.n_samples
 
-    # gauss_data for SPDE, grnd_trth_data for particle simulator
+    # gauss_data for SPDE, grnd_trth_data for particle simulator 
     gauss_data     = torch.zeros((n_samples,n_total_steps+1,ncells))
     grnd_trth_data  = torch.zeros((n_samples,n_total_steps+1,ncells))
 
