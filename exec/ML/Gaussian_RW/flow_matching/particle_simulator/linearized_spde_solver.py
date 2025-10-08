@@ -63,6 +63,9 @@ def fhd_model_run (cfg):
     par_per_cell = torch.sum(get_density(cell_centers,initial_pos)).cpu().item()
     par_per_cell /= ncells
 
+    # Prefactor that is used for noise in linearized SPDE
+    constant_prefactor = torch.tensor(par_per_cell/dx)
+
     cell_centers = torch.linspace(0.5*dx,len_system-0.5*dx,ncells)
     periodic_boundary = boundary_asserts(left_boundary, right_boundary)
 
@@ -137,7 +140,7 @@ def fhd_model_run (cfg):
             # Noise corresponding to faces
             ##################################################################
             ### Linearized version uses spatial mean as factor for noise here
-            lin_value = torch.mean(dens_old)*torch.ones_like(dens_old)
+            lin_value = constant_prefactor*torch.ones_like(dens_old)
             flux_fluc_p = torch.sqrt(torch.clamp(lin_value,min=0.))
             flux_fluc_p *= np.sqrt(1/(dt*dx))
 
