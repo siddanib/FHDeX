@@ -31,19 +31,33 @@ def fhd_model_run (cfg):
     assert dataset_name in ["uniform", "well", "reservoir"]
     print("Creating "+dataset_name+" dataset")
 
-    par_per_cell = cfg.par_per_cell
+    if "par_per_cell" in cfg:
+        par_per_cell = cfg.par_per_cell
+        num_par = int(par_per_cell*ncells)
+    elif "num_par" in cfg:
+        num_par = int(cfg.num_par)
+
     ncells = cfg.ncells
-    num_par = par_per_cell*ncells
     len_system=1.0
     dx = len_system/ncells
+    nbins = cfg.nbins
+    assert(ncells % nbins == 0)
+    deltax = len_system/nbins
+
     dt = cfg.cfl*dx*dx # ensure <= 0.1*dx*dx
-    cell_centers = torch.linspace(0.5*dx,len_system-0.5*dx,ncells)
+    cell_centers_dx = torch.linspace(0.5*dx,len_system-0.5*dx,ncells)
+    cell_centers_deltax = torch.linspace(0.5*deltax,len_system-0.5*deltax,
+                                         nbins)
 
     if dataset_name == "uniform":
         left_boundary  = ["periodic", 0]
         right_boundary = ["periodic", 0]
-        initial_pos = get_uni_initial_pos(ncells,par_per_cell,
+        if "par_per_cell" in cfg:
+            initial_pos = get_uni_initial_pos(ncells,par_per_cell,
                                           len_system=len_system)
+        elif "num_par" in cfg:
+            initial_pos = torch.rand((num_par,))*len_system
+
     elif dataset_name == "well":
         left_boundary  =["periodic", 0]
         right_boundary = ["periodic", 0]
@@ -54,27 +68,29 @@ def fhd_model_run (cfg):
     elif dataset_name == "reservoir":
         left_boundary  = list(cfg.dataset.left_boundary)
         right_boundary = list(cfg.dataset.right_boundary)
-        initial_pos = get_uni_initial_pos(ncells,par_per_cell,
+        if "par_per_cell" in cfg:
+            initial_pos = get_uni_initial_pos(ncells,par_per_cell,
                                           len_system=len_system)
+        elif "num_par" in cfg:
+            initial_pos = torch.rand((num_par,))*len_system
     else:
         sys.exit(f"{dataset_name} dataset does not exist.")
 
     # Re-evaluate average particles per cell
-    par_per_cell = torch.sum(get_density(cell_centers,initial_pos)).cpu().item()
+    par_per_cell = torch.sum(get_density(cell_centers_dx,initial_pos)).cpu().item()
     par_per_cell /= ncells
 
     # Prefactor that is used for noise in linearized SPDE
     constant_prefactor = torch.tensor(par_per_cell/dx)
 
-    cell_centers = torch.linspace(0.5*dx,len_system-0.5*dx,ncells)
     periodic_boundary = boundary_asserts(left_boundary, right_boundary)
 
     n_total_steps = cfg.n_total_particle_steps
     n_samples   = cfg.n_samples
 
     # gauss_data for SPDE, grnd_trth_data for particle simulator 
-    gauss_data     = torch.zeros((n_samples,n_total_steps+1,ncells))
-    grnd_trth_data  = torch.zeros((n_samples,n_total_steps+1,ncells))
+    gauss_data     = torch.zeros((n_samples,n_total_steps+1,nbins))
+    grnd_trth_data  = torch.zeros((n_samples,n_total_steps+1,nbins))
 
     # Same initial condition for all realizations in an ensemble
     same_ic = cfg.same_ic
@@ -100,14 +116,18 @@ def fhd_model_run (cfg):
                                                   left_boundary, right_boundary,
                                                   len_system = len_system)
         ######### SPDE ###################################################
-        initial_density_spde = get_density(cell_centers,
+        initial_density_spde = get_density(cell_centers_dx,
                                       initial_pos.clone()).float()
         initial_density_spde /= dx
-        gauss_data[i_ens,0, :] = initial_density_spde[:]
+        ###################################################################
+        ### Data is stored in nbins
+        gauss_data[i_ens,0, :] = (get_density(cell_centers_deltax,
+                                        initial_pos.clone()).float())/deltax
+        ###################################################################
         dens_old[...] = initial_density_spde[...]
         ###################################################################
         ####### Particle simulation #######################################
-        initial_density_ps = get_density(cell_centers, initial_pos.clone())
+        initial_density_ps = get_density(cell_centers_deltax, initial_pos.clone())
         grnd_trth_data[i_ens,0, :] = initial_density_ps[:]
         iter_pos = initial_pos.clone()
         ###################################################################
@@ -161,11 +181,16 @@ def fhd_model_run (cfg):
             dens_new /= dx
             dens_new *= dt
             dens_new += dens_old
-            gauss_data[i_ens,i_t,:] = dens_new
+            ################################################################
+            ### Data needs to be converted from ncells to nbins
+            gauss_data[i_ens,i_t,:] = torch.sum(
+                                        torch.reshape(dens_new.clone(),(-1,int(ncells/nbins))),
+                                        dim=-1)
+            ################################################################
             dens_old[...] = dens_new[...]
             ###############################################################
             ###### Particle Simulation ###################################
-            iter_pos, new_density, _ = random_walk_v2(ncells, 1, dt,
+            iter_pos, new_density, _ = random_walk_v2(nbins, 1, dt,
                                            iter_pos.clone(),
                                            left_boundary, right_boundary,
                                            len_system = len_system)
@@ -189,6 +214,7 @@ def fhd_model_run (cfg):
         f.create_dataset("lin_gauss_data"  , data=gauss_data_np, dtype = np.float32)
         f.create_dataset("dt", data=dt, dtype=float)
         f.create_dataset("dx", data=dx, dtype=float)
+        f.create_dataset("deltax", data=deltax, dtype=float)
         f.create_dataset("len_system", data=len_system, dtype=float)
 
 if __name__ == "__main__":

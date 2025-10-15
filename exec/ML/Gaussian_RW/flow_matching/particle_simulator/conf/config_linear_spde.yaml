@@ -1,8 +1,9 @@
 defaults:
   - override /hydra/launcher: joblib
 
-ncells : 100
-par_per_cell : ???
+ncells : ???
+nbins :  100
+num_par : 100
 cfl: 0.03
 # Name is sufficient for uniform dataset
 dataset:
@@ -25,5 +26,5 @@ hydra:
     n_jobs: 64
   sweeper:
     params:
-      par_per_cell : 1, 10, 50
+      ncells: 100, 200, 400, 800
       realizations: range(0, 100)
