@@ -17,19 +17,20 @@ alg_type = 1
 # *****************************************************************
 # Are we restarting from an existing checkpoint file?
 # *****************************************************************
-#amr.restart  = chk00060 # restart from this checkpoint file
+#amr.restart  = chk00010 # restart from this checkpoint file
 
 # *****************************************************************
 # Problem size and geometry
 # *****************************************************************
 geometry.prob_lo     =  0.0    0.0
-geometry.prob_hi     =  1.0  256.0
+geometry.prob_hi     =  1.0  2048.0
 geometry.is_periodic =  1    1
 bc_lo = 0 0
 bc_hi = 0 0
 
 is_ensemble_dir = 0 1
 ext_pot.exists = 0
+remove_particle_history = "false"
 
 # *****************************************************************
 # VERBOSITY
@@ -42,7 +43,7 @@ amr.v              = 1       # verbosity in Amr
 
 amr.max_grid_size_x = 32 32
 amr.max_grid_size_y = 32 32
-amr.n_cell          = 100 256
+amr.n_cell          = 100 2048
 
 amr.max_level       = 0
 amr.use_particles   = 1      # Turn particles on or off
@@ -64,12 +65,12 @@ adv.cfl            = 0.03    # CFL constraint
 # Plotfile name and frequency
 # *****************************************************************
 amr.plot_file  = plt    # root name of plot file
-amr.plot_int   =  5000    # number of timesteps between plot files
+amr.plot_int   =  10000    # number of timesteps between plot files
                         # if negative then no plot files will be written
 
 # *****************************************************************
 # Checkpoint name and frequency
 # *****************************************************************
 amr.chk_file = chk      # root name of checkpoint file
-amr.chk_int  = -1       # number of timesteps between checkpoint files
+amr.chk_int  = 10000    # number of timesteps between checkpoint files
                         # if negative then no checkpoint files will be written

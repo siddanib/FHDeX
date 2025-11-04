@@ -156,6 +156,16 @@ AmrCoreAdv::Evolve ()
                        << std::scientific <<  sum_phi_old << " " << std::setw(2l) << std::setprecision(12)
                        << std::scientific <<  sum_phi_new << " " << std::setw(2l) << std::setprecision(12)
                        << std::scientific << (sum_phi_new - sum_phi_old) << std::endl;
+        if (alg_type != 0 ) {
+          // sum phi to check conservation
+          sum_phi_old = phi_old[0].sum(1);
+          sum_phi_new = phi_new[0].sum(1);
+
+          amrex::Print() << "Ensemble Sum_old Sum_new Diff (Phi1) = "    << std::setw(20) << std::setprecision(12)
+                         << std::scientific <<  sum_phi_old << " " << std::setw(2l) << std::setprecision(12)
+                         << std::scientific <<  sum_phi_new << " " << std::setw(2l) << std::setprecision(12)
+                         << std::scientific << (sum_phi_new - sum_phi_old) << std::endl;
+          }
 
         // sync up time
         for (lev = 0; lev <= finest_level; ++lev) {
@@ -871,6 +881,20 @@ AmrCoreAdv::EstTimeStep (int lev, Real /*time*/)
     Real coeff = AMREX_D_TERM(   2./(dx[0]*dx[0]),
                                + 2./(dx[1]*dx[1]),
                                + 2./(dx[2]*dx[2]) );
+
+    int ensemble_run = 0;
+    for (int edir : m_ensemble_dir) {
+        ensemble_run += edir;
+    }
+    if (ensemble_run) {
+        coeff = 0.;
+        for (int idir=0; idir < AMREX_SPACEDIM; ++idir) {
+            if (m_ensemble_dir[idir] == 0) {
+                coeff += 2./(dx[idir]*dx[idir]);
+            }
+        }
+    }
+
     Real est = 1.0 / (2.0*coeff);
     dt_est = amrex::min(dt_est, est);
 
@@ -1161,7 +1185,14 @@ AmrCoreAdv::ReadCheckpointFile ()
 
         // build MultiFab and FluxRegister data
         int ncomp = 1;
-        int ng = 0;
+        // Check if this is an ensemble run
+        int ensemble_run = 0;
+        for (int edir : m_ensemble_dir) {
+            ensemble_run += edir;
+        }
+        if (ensemble_run) { ncomp = 2;}
+
+        int ng = 1;
         phi_old[lev].define(grids[lev], dmap[lev], ncomp, ng);
         phi_new[lev].define(grids[lev], dmap[lev], ncomp, ng);
 

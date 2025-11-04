@@ -57,6 +57,7 @@ struct ParticleData {
             amrex::ParmParse pp_ens;
             // read in if a direction is ensemble direction
             pp_ens.queryarr("is_ensemble_dir", m_ensemble_dir, 0, AMREX_SPACEDIM);
+            pp_ens.query("remove_particle_history", m_remove_particle_history);
         }
     }
 
@@ -344,6 +345,34 @@ struct ParticleData {
         const int comp_id = 1;
         // Update stochastic particles
         if (use_particles && (multilevel_run == 0)) {
+            //***********************************************************************
+            // Delete particles and re-add them to remove history effects
+            //***********************************************************************
+            if (m_remove_particle_history) {
+                // Store phi based on current particle location
+                amrex::MultiFab phi_crse_old(phi_crse_new.boxArray(),
+                                             phi_crse_new.DistributionMap(),
+                                             1, phi_crse_new.nGrow());
+                phi_crse_old.setVal(0.);
+                stochastic_particles->Increment(phi_crse_old, lev);
+                phi_crse_old.FillBoundary(
+                        stochastic_particles->GetParGDB()->Geom(lev).periodicity());
+                phi_crse_old.mult(1./cell_vol);
+                // Delete the current state of ALL particles
+                stochastic_particles->RemoveParticlesAtLevel(lev);
+                // Add them again based on phi_crse_old
+                stochastic_particles->InitParticles(phi_crse_old, m_ext_pot, m_ext_pot_alpha,
+                                                    m_ext_pot_beta, m_ext_pot_gamma, lev);
+                // **********************************************************************
+                // Redistribute so every particle is in the "correct" place
+                // **********************************************************************
+                stochastic_particles->Redistribute();
+                // **********************************************************************
+                // Remove particles that are not in the valid boxArray
+                // **********************************************************************
+                stochastic_particles->RemoveParticlesNotInBA(phi_crse_old.boxArray(), lev);
+            }
+
             // **********************************************************************
             // Advect the particles in the valid region and in the ghost region
             // **********************************************************************
@@ -386,6 +415,9 @@ struct ParticleData {
     // This variable decides if a particular direction is ensemble direction
     // grid spacing along ensemble directions needs to be UNITY
     amrex::Vector<int> m_ensemble_dir = {AMREX_D_DECL(0, 0, 0)};
+    // This bool controls if the positions of particles are
+    // reinitialized after every time step. ONLY used in ensemble mode
+    bool m_remove_particle_history = false;
     // Variables related to external potential (Only 2D for now)
     int m_ext_pot = 0;
     amrex::Real m_ext_pot_alpha = 0.;
