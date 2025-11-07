@@ -58,6 +58,7 @@ struct ParticleData {
             // read in if a direction is ensemble direction
             pp_ens.queryarr("is_ensemble_dir", m_ensemble_dir, 0, AMREX_SPACEDIM);
             pp_ens.query("remove_particle_history", m_remove_particle_history);
+            pp_ens.query("remove_hist_freq", m_remove_hist_freq);
         }
     }
 
@@ -339,7 +340,7 @@ struct ParticleData {
     }
 
     void advance_particles(int lev, amrex::Real dt_lev, amrex::Real cell_vol,
-                           amrex::MultiFab& phi_crse_new)
+                           amrex::MultiFab& phi_crse_new, int a_istep)
     {
         // The component of phi_crse_new that will be modified based on Particles
         const int comp_id = 1;
@@ -348,7 +349,8 @@ struct ParticleData {
             //***********************************************************************
             // Delete particles and re-add them to remove history effects
             //***********************************************************************
-            if (m_remove_particle_history) {
+            if (m_remove_particle_history &&
+                (a_istep % m_remove_hist_freq == 0)) {
                 // Store phi based on current particle location
                 amrex::MultiFab phi_crse_old(phi_crse_new.boxArray(),
                                              phi_crse_new.DistributionMap(),
@@ -418,6 +420,7 @@ struct ParticleData {
     // This bool controls if the positions of particles are
     // reinitialized after every time step. ONLY used in ensemble mode
     bool m_remove_particle_history = false;
+    int m_remove_hist_freq = 1;
     // Variables related to external potential (Only 2D for now)
     int m_ext_pot = 0;
     amrex::Real m_ext_pot_alpha = 0.;

@@ -809,7 +809,8 @@ AmrCoreAdv::timeStepNoSubcycling (Real time, int iteration)
     }
     else {
         particleData.advance_particles(lev_for_particles, dt[lev_for_particles],
-                                       cell_vol, phi_new[lev_for_particles]);
+                                       cell_vol, phi_new[lev_for_particles],
+                                       istep[lev_for_particles]);
     }
     particleData.Redistribute();
 #endif
