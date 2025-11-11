@@ -1,0 +1,32 @@
+defaults:
+  - override /hydra/launcher: joblib
+
+n_range : [0,50]
+n_scale: 51
+ncells: 100
+par_per_cell: 10
+n_samples: 20000
+batch_size: 1000
+n_total_particle_steps: 1000
+
+df: 4.0
+model:
+  history_length : 2
+  n_layers     : 4
+  layer_width  : 16
+  act_func:
+    _target_ : "torch.nn.Tanh"
+  residual_con : true
+  train: false
+  file_name: "outputs/2025-11-11/10-13-39/flow_deeponet_2025-11-11_11-12-56.tar"
+n_sampling_steps: 20
+
+max_level: ???
+
+hydra:
+  mode: 2
+  launcher:
+    n_jobs: 4
+  sweeper:
+    params:
+      max_level: 0, 1, 2

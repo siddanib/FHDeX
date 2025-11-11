@@ -1,0 +1,21 @@
+n_range:
+- 0
+- 50
+n_scale: 51
+n_samples: 10000
+batch_size: 186
+df: 4.0
+max_iter: 400000
+n_iter_per_epoch: 5000
+learning_rate: 0.0001
+model:
+  history_length: 2
+  n_layers: 4
+  layer_width: 16
+  act_func:
+    _target_: torch.nn.Tanh
+  residual_con: true
+  train: true
+  file_name: outputs/2025-11-10/17-42-42/flow_deeponet_2025-11-10_18-54-43.tar
+  epoch_start: 49
+n_sampling_steps: 20
