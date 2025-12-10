@@ -183,7 +183,7 @@ void compute_flux_x (int i, int j, int k,
                      amrex::Array4<amrex::Real const> const& phi, amrex::Real dxinv,
                      int lo, int hi, int dom_lo, int dom_hi, int bc_lo, int bc_hi,int Ncomp,
                      int a_ext_pot, amrex::Real a_alpha, amrex::Real a_beta,
-                     amrex::Real a_gamma)
+                     amrex::Real a_gamma, amrex::Real a_d_spde)
 {
     int coeff_index = Ncomp-1;
     amrex::Real phibdry = 0.;
@@ -274,7 +274,8 @@ void compute_flux_x (int i, int j, int k,
           //amrex::Print() << "phi " << phi(i,j,k,0) << std::endl;
           //amrex::Print() << "phim " << phim << std::endl;
 
-          fluxx(i,j,k,0) = 0.5*(phip-phim) * dxinv;
+          // Note that Diffusion Coefficient changed from 0.5 to a_d_spde
+          fluxx(i,j,k,0) = a_d_spde*(phip-phim) * dxinv;
 
           if(ext_pot == 1) {
 
@@ -294,7 +295,7 @@ void compute_flux_x (int i, int j, int k,
            fluxx(i,j,k,1) = fluxx(i,j,k,0);
         }
 
-          amrex::Real sqphiavg = 0.5*(std::sqrt(phipn)+std::sqrt(phimn));
+          amrex::Real sqphiavg = std::sqrt(2.*a_d_spde)*0.5*(std::sqrt(phipn)+std::sqrt(phimn));
           fluxx(i,j,k,0) += stofact * stochfluxx(i,j,k) * sqphiavg;
 //          amrex::Print() << " x flux " << i << " " << j << " " << fluxx(i,j,k,0) << std::endl;
 }
@@ -306,7 +307,7 @@ void compute_flux_y (int i, int j, int k,
                      amrex::Array4<amrex::Real const> const& phi, amrex::Real dyinv,
                      int lo, int hi, int dom_lo, int dom_hi, int bc_lo, int bc_hi, int Ncomp,
                      int a_ext_pot, amrex::Real a_alpha, amrex::Real a_beta,
-                     amrex::Real a_gamma)
+                     amrex::Real a_gamma, amrex::Real a_d_spde)
 {
     int coeff_index = Ncomp-1;
     amrex::Real phibdry = 0.;
@@ -359,7 +360,8 @@ void compute_flux_y (int i, int j, int k,
         //fluxy(i,j,k,0) = 0.5*(phi(i,j,k,0)-phi(i,j-1,k,0)) * dyinv
         //+ stochfluxy(i,j,k)* std::sqrt(phiavg);
 
-        fluxy(i,j,k,0) = 0.5*(phip-phim) * dyinv;
+        // Note that Diffusion Coefficient changed from 0.5 to a_d_spde
+        fluxy(i,j,k,0) = a_d_spde*(phip-phim) * dyinv;
 
           if(ext_pot == 1) {
 
@@ -379,7 +381,7 @@ void compute_flux_y (int i, int j, int k,
            fluxy(i,j,k,1) = fluxy(i,j,k,0);
         }
 
-        amrex::Real sqphiavg = 0.5*(std::sqrt(phipn)+std::sqrt(phimn));
+        amrex::Real sqphiavg = std::sqrt(2.0*a_d_spde)*0.5*(std::sqrt(phipn)+std::sqrt(phimn));
 
         fluxy(i,j,k,0) += stofact * stochfluxy(i,j,k)* sqphiavg;
 //        amrex::Print() << " y flux " << i << " " << j << " " << fluxy(i,j,k,0) << std::endl;
@@ -394,7 +396,7 @@ void compute_flux_z (int i, int j, int k,
                      amrex::Array4<amrex::Real const> const& phi, amrex::Real dzinv,
                      int lo, int hi, int dom_lo, int dom_hi, int bc_lo, int bc_hi, int Ncomp,
                      int a_ext_pot, amrex::Real a_alpha, amrex::Real a_beta,
-                     amrex::Real a_gamma)
+                     amrex::Real a_gamma, amrex::Real a_d_spde)
 {
     amrex::ignore_unused(a_alpha, a_beta, a_gamma);
     if (a_ext_pot) {
@@ -436,8 +438,10 @@ void compute_flux_z (int i, int j, int k,
         //amrex::Real phiavg = 2.*(phip*phim)/(phip+phim+1.e-16);
         //fluxz(i,j,k,0) = 0.5*(phi(i,j,k,0)-phi(i,j,k-1,0)) * dzinv
         // +stochfluxz(i,j,k) * std::sqrt(phiavg);
-        amrex::Real sqphiavg = 0.5*(std::sqrt(phip)+std::sqrt(phim));
-        fluxz(i,j,k,0) = 0.5*(phi(i,j,k,0)-phi(i,j,k-1,0)) * dzinv
+
+        amrex::Real sqphiavg = std::sqrt(2.*a_d_spde)*0.5*(std::sqrt(phip)+std::sqrt(phim));
+        // Note that Diffusion Coefficient changed from 0.5 to a_d_spde
+        fluxz(i,j,k,0) = a_d_spde*(phi(i,j,k,0)-phi(i,j,k-1,0)) * dzinv
          +stochfluxz(i,j,k) * sqphiavg;
         if(Ncomp == 2){
            fluxz(i,j,k,1) = 0.5*(phi(i,j,k,1)-phi(i,j,k-1,1)) * dzinv;

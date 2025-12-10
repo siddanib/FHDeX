@@ -15,7 +15,7 @@ void advance_phi (MultiFab& phi_old,
                   Vector<BCRec> const& BoundaryCondition,
                   Vector<int> const& a_ensemble_dir,
                   int a_ext_pot, Real a_alpha, Real a_beta,
-                  Real a_gamma)
+                  Real a_gamma, Real a_d_spde)
 {
     int Ncomp = phi_old.nComp();
 
@@ -69,7 +69,7 @@ void advance_phi (MultiFab& phi_old,
                 {
                     compute_flux_x(i,j,k,fluxx,stochfluxx,phi,dxinv,
                                    lo.x, hi.x, dom_lo.x, dom_hi.x, bc.lo(0), bc.hi(0),Ncomp,
-                                   a_ext_pot, a_alpha, a_beta, a_gamma);
+                                   a_ext_pot, a_alpha, a_beta, a_gamma, a_d_spde);
                 });
         }
 
@@ -79,7 +79,7 @@ void advance_phi (MultiFab& phi_old,
                 {
                     compute_flux_y(i,j,k,fluxy,stochfluxy,phi,dyinv,
                                    lo.y, hi.y, dom_lo.y, dom_hi.y, bc.lo(1), bc.hi(1),Ncomp,
-                                   a_ext_pot, a_alpha, a_beta, a_gamma);
+                                   a_ext_pot, a_alpha, a_beta, a_gamma, a_d_spde);
                 });
         }
 #if (AMREX_SPACEDIM > 2)
@@ -89,7 +89,7 @@ void advance_phi (MultiFab& phi_old,
                 {
                     compute_flux_z(i,j,k,fluxz,stochfluxz,phi,dzinv,
                                    lo.z, hi.z, dom_lo.z, dom_hi.z, bc.lo(2), bc.hi(2),Ncomp,
-                                   a_ext_pot, a_alpha, a_beta, a_gamma);
+                                   a_ext_pot, a_alpha, a_beta, a_gamma, a_d_spde);
                 });
         }
 #endif

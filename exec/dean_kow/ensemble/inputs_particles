@@ -2,7 +2,7 @@
 # Run until nsteps == max_step or time == stop_time,
 #     whichever comes first
 # *****************************************************************
-max_step  = 102000
+max_step  = 100 #100000
 
 seed = 1024
 
@@ -17,7 +17,7 @@ alg_type = 1
 # *****************************************************************
 # Are we restarting from an existing checkpoint file?
 # *****************************************************************
-amr.restart  = chk100000 # restart from this checkpoint file
+#amr.restart  = chk100000 # restart from this checkpoint file
 
 # *****************************************************************
 # Problem size and geometry
@@ -29,8 +29,10 @@ bc_lo = 0 0
 bc_hi = 0 0
 
 is_ensemble_dir = 0 1
+diffusion_coefficient = 0.5
+
 ext_pot.exists = 0
-remove_particle_history = "true"
+remove_particle_history = "false"
 remove_hist_freq        = 2
 
 # *****************************************************************

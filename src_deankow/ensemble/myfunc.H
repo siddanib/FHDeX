@@ -16,6 +16,6 @@ void advance_phi (amrex::MultiFab& phi_old,
                   Vector<amrex::BCRec> const& BoundaryCondition,
                   Vector<int> const& a_ensemble_dir,
                   int a_ext_pot, Real a_alpha, Real a_beta,
-                  Real a_gamma);
+                  Real a_gamma, Real a_d_spde);
 
 #endif

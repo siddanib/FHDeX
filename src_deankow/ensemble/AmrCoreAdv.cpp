@@ -539,6 +539,8 @@ AmrCoreAdv::ReadParameters ( amrex::Vector<int>& bc_lo, amrex::Vector<int>& bc_h
                 AMREX_ALWAYS_ASSERT(Geom(0).CellSize(idir) == Real(1.0));
             }
         }
+
+        pp.get("diffusion_coefficient",m_d_spde);
     }
 
     {

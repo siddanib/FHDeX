@@ -180,6 +180,8 @@ private:
     // This variable decides if a particular direction is ensemble direction
     // grid spacing along ensemble directions needs to be UNITY
     amrex::Vector<int> m_ensemble_dir = {AMREX_D_DECL(0, 0, 0)};
+    // This variable is used to modify the diffusion coefficient of SPDE
+    amrex::Real m_d_spde = 0.5;
     // Variables related to external potential (Only 2D for now)
     int m_ext_pot = 0;
     amrex::Real m_ext_pot_alpha = 0.;
