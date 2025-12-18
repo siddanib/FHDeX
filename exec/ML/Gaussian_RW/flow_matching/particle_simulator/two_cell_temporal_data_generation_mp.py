@@ -54,9 +54,11 @@ def realization_process (itr, n_steps, N_left, N_right, ncells,
         itr_flux_data[i_step,0] = flux[2]
 
     with h5py.File(dataset_name+f"_{itr}"+".h5", mode="w") as f:
-        f.create_dataset("density_data"  , data=itr_density_data.cpu().numpy(),
+        f.create_dataset("density_data",
+                         data=itr_density_data.cpu().numpy(),
                          dtype = np.float32)
-        f.create_dataset("flux_data"  , data=itr_flux_data.cpu().numpy(),
+        f.create_dataset("particle_flux_data",
+                         data=itr_flux_data.cpu().numpy(),
                          dtype = np.float32)
         f.create_dataset("ncells", data=ncells, dtype = 'i')
         f.create_dataset("N_left", data=N_left, dtype = 'i')
