@@ -24,6 +24,9 @@ from model import Hierarchical_Model
 torch.set_default_device('cpu')
 
 def realization_process (itr, cfg):
+    # Setting num_threads inside subprocess function seems
+    # vital for proper scaling
+    torch.set_num_threads(1)
     N_scale = cfg.n_scale
     dx = 1.0/100
     ncells = 2
@@ -130,7 +133,7 @@ def realization_process (itr, cfg):
 def fhd_model_run (cfg):
     num_processes = cfg.num_processes
     ########################################################
-    with torch.multiprocessing.Pool(processes=num_processes) as pool:
+    with mp.Pool(processes=num_processes) as pool:
         results = pool.map(partial(realization_process,cfg = cfg),
                            range(num_processes))
 

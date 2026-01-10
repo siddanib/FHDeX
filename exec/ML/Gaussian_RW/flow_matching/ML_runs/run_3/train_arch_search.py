@@ -41,11 +41,12 @@ def save_model (len_system, noise_std_fctr, n_layers, layer_width,
                              "flow_deeponet_"+timestamp_str+".tar")
                 )
 
-torch.set_default_device('cuda')
+torch.set_default_device('cpu')
 
-@hydra.main(version_base=None, config_path="./conf", config_name="config")
+@hydra.main(version_base=None, config_path="./conf",
+            config_name="config_arch_search")
 def fhd_model_run (cfg):
-    torch.set_default_device('cuda')
+    torch.set_default_device('cpu')
     N_min  = min(cfg.n_range)
     N_max  = max(cfg.n_range)
     N_scale = cfg.n_scale
@@ -87,6 +88,8 @@ def fhd_model_run (cfg):
             chpt_fl = torch.load(cfg.model.file_name,weights_only=False)
             flow.load_state_dict(chpt_fl['model_state_dict'])
             epoch_start = cfg.model.epoch_start
+
+    mean_loss_list = []
 
     if cfg.model.train:
         n_iter_per_epoch = min(cfg.max_iter,cfg.n_iter_per_epoch)
@@ -144,6 +147,7 @@ def fhd_model_run (cfg):
                 mean_loss += loss_batch.item()
             mean_loss /= n_mn_vals
             print(f"Epoch: {epch}, loss: {mean_loss}")
+            mean_loss_list.append(mean_loss)
             if epch % 10 == 0:
                 save_model(len_system, noise_std_fctr, n_layers, layer_width,
                            residual_con, batch_size, cfg, learning_rate,
@@ -156,7 +160,8 @@ def fhd_model_run (cfg):
     else:
         chpt_fl = torch.load(cfg.model.file_name)
         flow.load_state_dict(chpt_fl['model_state_dict'])
-    return None
+
+    return np.mean(mean_loss_list[-4:])
 
 if __name__ == "__main__":
     fhd_model_run()

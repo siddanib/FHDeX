@@ -1,0 +1,48 @@
+defaults:
+  - override /hydra/launcher: joblib
+  - override hydra/sweeper: ax
+
+nmoves : 34
+n_range : [0,50]
+n_scale: 51
+batch_size: 186
+df: 4.0
+max_iter: 50000
+n_iter_per_epoch: 5000
+learning_rate : ???
+model:
+  half_window : 5 # No of cells on each side
+  history_length : 0
+  n_layers     : ???
+  layer_width  : ???
+  act_func:
+    _target_ : ???
+  residual_con : ???
+  train: true
+  file_name: ""
+  epoch_start: 0
+
+hydra:
+  mode: 2
+  launcher:
+    n_jobs: 40
+  sweeper:
+    ax_config:
+      max_trials: 100
+      params:
+        learning_rate:
+          type: range
+          bounds: [1.0e-5, 1.0e-2]
+          log_scale: true
+        model.n_layers:
+          type: range
+          bounds: [1, 10]
+        model.layer_width:
+          type: range
+          bounds: [16, 512]
+        model.act_func._target_:
+          type: choice
+          values: ["torch.nn.ReLU", "torch.nn.Tanh", "torch.nn.SELU"]
+        model.residual_con:
+          type: choice
+          values: [true, false]
