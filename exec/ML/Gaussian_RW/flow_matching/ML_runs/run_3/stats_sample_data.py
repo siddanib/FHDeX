@@ -6,16 +6,23 @@ import matplotlib.pyplot as plt
 
 plt.rcParams.update({'font.size': 25})
 
-parent_folder = "./multirun/2026-01-08/17-59-17/"
+#parent_folder = "./multirun/2026-01-08/17-59-17/"
+#parent_folder = "./multirun/2026-01-12/11-54-41/"
+#parent_folder = "./multirun/2026-01-12/17-50-08/"
+#parent_folder = "./multirun/2026-01-13/14-11-08/"
+#parent_folder = "./multirun/2026-01-14/12-25-39/"
+parent_folder = "./outputs/2026-01-15/13-04-50/"
 
 dir_list = []
 
 for itm in os.listdir(parent_folder):
-        # Construct full path
-        full_path = os.path.join(parent_folder, itm)
-        # Check if it's a directory
-        if os.path.isdir(full_path):
-            dir_list.append(full_path)
+    # Construct full path
+    full_path = os.path.join(parent_folder, itm)
+    # Check if it's a directory
+    if os.path.isdir(full_path):
+        if ".hydra" in full_path:
+            continue
+        dir_list.append(full_path)
 
 data_array = np.zeros((len(dir_list), 10))
 
@@ -30,7 +37,6 @@ for ii, directory in enumerate(dir_list):
 
     # What if I round the data I obtain from the model
     #mdl_data_np = np.round(mdl_data_np)
-
 
     data_array[ii, 0] = n_left
     data_array[ii, 1] = n_right
@@ -67,8 +73,12 @@ for ii, directory in enumerate(dir_list):
 
     #print(np.abs(data_test))
 
-plot_data = data_array[:,8:10]
+n_start = 8
 title_string = "Kurtosis"
+
+plot_data = data_array[:,n_start:n_start+2]
+print(np.mean(np.abs(plot_data[:,0]-plot_data[:,1])))
+
 
 fig, ax  = plt.subplots(1,1,figsize=(10,10))
 scatter = ax.scatter(plot_data[:,0], plot_data[:,1])
@@ -84,5 +94,5 @@ ax.set_ylabel('ML')
 #ax.set_ylabel(r'$N_{R}$')
 ax.grid(True)
 plt.tight_layout()
-plt.savefig(title_string+".jpeg")
+#plt.savefig(title_string+".jpeg")
 plt.show()

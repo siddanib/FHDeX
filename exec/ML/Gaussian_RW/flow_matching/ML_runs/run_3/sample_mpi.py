@@ -22,7 +22,7 @@ from model import Hierarchical_Model
 
 torch.set_default_device('cpu')
 
-def realization_process (itr, cfg):
+def realization_process (comb_id, rank_id, n_left, n_right, cfg):
     # Setting num_threads inside subprocess function seems
     # vital for proper scaling
     torch.set_num_threads(1)
@@ -69,8 +69,8 @@ def realization_process (itr, cfg):
     n_samples = cfg.n_samples
     grnd_trth_data = torch.zeros((n_samples,))
     mdl_data       = torch.zeros_like(grnd_trth_data)
-    N_left  = int(cfg.n_left)
-    N_right = int(cfg.n_right)
+    N_left  = int(n_left)
+    N_right = int(n_right)
     N_min   = min(cfg.n_range)
     N_max   = max(cfg.n_range)
     ############# Separate out ML data from Particle data #####################
@@ -116,10 +116,10 @@ def realization_process (itr, cfg):
     grnd_trth_np = grnd_trth_data.cpu().numpy()
     mdl_data_np  = mdl_data.cpu().numpy()
 
-    dataset_name = os.path.join(HydraConfig.get().runtime.output_dir,
+    dataset_name = os.path.join(HydraConfig.get().runtime.output_dir,f"{comb_id}",
                                 f"samples_two_cells_{int(N_left)}_{int(N_right)}")
 
-    with h5py.File(dataset_name+f"_{itr}.h5", mode="w") as f:
+    with h5py.File(dataset_name+f"_{rank_id}.h5", mode="w") as f:
         f.create_dataset("ground_truth_data", data=grnd_trth_np, dtype = np.float32)
         f.create_dataset("model_data"  , data=mdl_data_np, dtype = np.float32)
         f.create_dataset("N_left", data=int(N_left), dtype = 'i')
@@ -129,7 +129,7 @@ def realization_process (itr, cfg):
 
 @torch.no_grad()
 @hydra.main(version_base=None, config_path="./conf",
-            config_name="config_sample")
+            config_name="config_sample_mpi")
 def fhd_model_run (cfg):
     # Get the global communicator
     app_comm = MPI.COMM_WORLD
@@ -137,8 +137,21 @@ def fhd_model_run (cfg):
     app_size = app_comm.Get_size()
     # Get the unique rank of the current process
     app_rank = app_comm.Get_rank()
-    # Call realization process
-    realization_process(app_rank, cfg)
+
+    left_list = cfg.n_left_list
+    right_list = cfg.n_right_list
+
+    comb_id = 0
+    for n_left in left_list:
+        for n_right in right_list:
+            directory_name = os.path.join(HydraConfig.get().runtime.output_dir,f"{comb_id}")
+            if app_rank == 0:
+                if not os.path.exists(directory_name):
+                    os.makedirs(directory_name)
+            app_comm.Barrier()
+            # Call realization process
+            realization_process(comb_id, app_rank, n_left, n_right,cfg)
+            comb_id += 1
 
 if __name__ == "__main__":
     fhd_model_run()
