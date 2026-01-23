@@ -1,0 +1,29 @@
+defaults:
+  - override /hydra/launcher: joblib
+
+nmoves : 34
+n_range : [0,50]
+n_scale: 51
+n_samples: 10 #2000
+batch_size: 100 # ensure that batch_size is > 2*nmoves
+df: 4.0
+n_left_list: [1, 5, 10, 15, 20, 35, 50]
+n_right_list: [0, 8, 10, 20, 33, 50]
+model:
+  half_window : 5 # No of cells on each side
+  history_length : 0
+  n_layers     : 3
+  layer_width  : 289
+  act_func:
+    _target_ : "torch.nn.ReLU"
+  residual_con : true
+  train: false
+  file_name: "outputs/2026-01-16/11-23-55/flow_deeponet_2026-01-16_16-15-02.tar"
+n_sampling_steps: 40
+
+add_noise_to_input: false
+
+max_level: 0
+
+hydra:
+  mode: 1
