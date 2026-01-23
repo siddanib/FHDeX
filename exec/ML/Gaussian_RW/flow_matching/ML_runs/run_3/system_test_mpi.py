@@ -11,9 +11,8 @@ from omegaconf import DictConfig
 from hydra.utils import instantiate
 from hydra.core.hydra_config import HydraConfig
 #####################################################
-############# For multiprocessing ##################
-import torch.multiprocessing as mp
-from functools import partial
+############# For MPI ##################
+from mpi4py import MPI
 #####################################################
 #######################################################
 ####### Local imports ################################
@@ -141,8 +140,7 @@ def realization_process (itr, cfg):
         ###########################################################
 
     dataset_name = os.path.join(HydraConfig.get().runtime.output_dir,
-                        f"system_temporal")
-
+                                "system_temporal")
     print(mdl_density_data)
     print(torch.sum(mdl_density_data,dim=-1))
     with h5py.File(dataset_name+f"_{itr}"+".h5", mode="w") as f:
@@ -158,18 +156,22 @@ def realization_process (itr, cfg):
     return None
 
 @hydra.main(version_base=None, config_path="./conf",
-            config_name="config_system_test_mp")
+            config_name="config_system_test_mpi")
 def fhd_data_run (cfg):
-    # THIS CODE IS ONLY for PERIODIC BOUNDARIES
+    # Get the global communicator
+    app_comm = MPI.COMM_WORLD
+    # Get the total number of processes
+    app_size = app_comm.Get_size()
+    # Get the unique rank of the current process
+    app_rank = app_comm.Get_rank()
+
     n_samples = cfg.n_samples
-    num_processes = cfg.num_processes
-    ########################################################
-    with torch.multiprocessing.Pool(processes=num_processes) as pool:
-        results = pool.map(partial(realization_process,cfg = cfg),
-                           range(n_samples))
+
+    for ii in range(n_samples):
+        itr = ii + app_rank*n_samples
+        realization_process (itr, cfg)
+
+    app_comm.Barrier()
 
 if __name__ == "__main__":
-    start_time = time.time()
     fhd_data_run()
-    end_time = time.time()
-    print(f"Elapsed time : {(end_time - start_time):6f}")
