@@ -28,7 +28,7 @@ from helpers_extended_domain import convert_model_outputs_to_system_data
 
 torch.set_default_device('cpu')
 
-def realization_process (itr, cfg):
+def realization_process (itr, cfg, flow):
     # Setting num_threads inside subprocess function seems
     # vital for proper scaling
     torch.set_num_threads(1)
@@ -42,26 +42,8 @@ def realization_process (itr, cfg):
     n_avg = cfg.n_avg
     ####### ML Model related ################################
     half_window = cfg.model.half_window
-    n_layers = cfg.model.n_layers
-    layer_width = cfg.model.layer_width
-    residual_con = cfg.model.residual_con
-    history_length = int(cfg.model.history_length)
-    act_func     = instantiate(cfg.model.act_func)
-    flow = Hierarchical_Model(history_length, half_window, 1, n_layers,
-                              layer_width,
-                              act_func = act_func,
-                              residual_con=residual_con)
-    # Load the trained ML model
-    chpt_fl = torch.load(cfg.model.file_name, weights_only=False,
-                         map_location=torch.device('cpu'))
-    flow.load_state_dict(chpt_fl['model_state_dict'])
     # Max level to leverage
     max_level = int(cfg.max_level)
-    flow.max_level = max_level
-    flow.train(False)
-    # Turn off gradients for the parameters
-    flow.train_levels([])
-    flow.compile()
     ################################################################
     n_steps   = cfg.n_steps
     nmoves = cfg.nmoves # Number of steps of size dt
@@ -173,9 +155,32 @@ def fhd_data_run (cfg):
 
     n_samples = cfg.n_samples
 
+    ####### ML Model related ################################
+    half_window = cfg.model.half_window
+    n_layers = cfg.model.n_layers
+    layer_width = cfg.model.layer_width
+    residual_con = cfg.model.residual_con
+    history_length = int(cfg.model.history_length)
+    act_func     = instantiate(cfg.model.act_func)
+    flow = Hierarchical_Model(history_length, half_window, 1, n_layers,
+                              layer_width,
+                              act_func = act_func,
+                              residual_con=residual_con)
+    # Load the trained ML model
+    chpt_fl = torch.load(cfg.model.file_name, weights_only=False,
+                         map_location=torch.device('cpu'))
+    flow.load_state_dict(chpt_fl['model_state_dict'])
+    # Max level to leverage
+    max_level = int(cfg.max_level)
+    flow.max_level = max_level
+    flow.train(False)
+    # Turn off gradients for the parameters
+    flow.train_levels([])
+    flow.compile()
+    ###########################################################
     for ii in range(n_samples):
         itr = ii + app_rank*n_samples
-        realization_process (itr, cfg)
+        realization_process(itr, cfg, flow)
 
     app_comm.Barrier()
 
