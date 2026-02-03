@@ -1,0 +1,8 @@
+This folder uses Students' T as initial distribution and General Variance Preserving interpolant
+
+The leveraged model satisfies reflection symmetry.
+
+
+During training the model is trained on perturbed equilibrium systems 
+
+NOTE: The std_scale is slightly modified.
