@@ -13,7 +13,7 @@ from hydra.utils import instantiate
 from hydra.core.hydra_config import HydraConfig
 #######################################################
 ####### Local imports ################################
-from random_walkers_pytorch import get_uni_initial_pos
+from random_walkers_pytorch import get_particle_positions
 from random_walkers_pytorch import get_density
 from random_walkers_pytorch import random_walk_just_evolve
 from model import Hierarchical_Model
@@ -46,8 +46,7 @@ def save_model (len_system, noise_std_fctr, n_layers, layer_width,
 
 torch.set_default_device('cuda')
 
-@hydra.main(version_base=None, config_path="./conf",
-            config_name="config_train_2")
+@hydra.main(version_base=None, config_path="./conf", config_name="config")
 def fhd_model_run (cfg):
     torch.set_default_device('cuda')
     N_min  = min(cfg.n_range)
@@ -111,9 +110,10 @@ def fhd_model_run (cfg):
                 n_mn_vals += 1
                 # Create the mini-batch
                 par_per_cell = np.random.randint(N_min+1,N_max+1)
-                nmoves_iter = np.random.randint(1,nmoves+1)
-                # Create a uniform system and thermalize for few steps
-                init_pos = get_uni_initial_pos(ncells, par_per_cell, len_system)
+                # Sample from a Poisson distribution
+                N_init_dist = torch.ones(batch_size)*par_per_cell
+                N_init_dist = torch.poisson(N_init_dist)
+                init_pos = get_particle_positions(N_init_dist, dx)
                 init_pos = random_walk_just_evolve(ncells, 50, dt,
                                                    init_pos.clone(), left_boundary,
                                                    right_boundary, len_system)
@@ -122,8 +122,7 @@ def fhd_model_run (cfg):
                                                               history_length,
                                                               dx, dt, left_boundary,
                                                               right_boundary,
-                                                              half_window,
-                                                              nmoves_iter)
+                                                              half_window, nmoves)
                 x_1  = output_batch
                 # Scale the output instead of input
                 ##############################################################
@@ -131,19 +130,21 @@ def fhd_model_run (cfg):
                 N_right_t = torch.narrow(input_batch,-1,-half_window,1)
                 # Shift the mean based on (N_left-N_right)
                 ### THE EXTRA 0.61 AND 0.93 FACTORS ARE IN 01_06_2026 SLIDES 
-                x_1 -= 0.61*(0.5*nmoves_iter*dt/(dx*dx))*(N_left_t-N_right_t)
+                x_1 -= 0.61*(0.5*nmoves*dt/(dx*dx))*(N_left_t-N_right_t)
                 # Change the standard deviation
                 std_scale = 0.5*(torch.sqrt(torch.clamp(N_left_t, min=0.))
                                  + torch.sqrt(torch.clamp(N_right_t,min=0.)))
                 std_scale = torch.clamp(std_scale,min=0.5)
-                std_scale *= np.sqrt(nmoves_iter*dt)/dx
+                std_scale *= np.sqrt(nmoves*dt)/dx
                 x_1 /= 0.93*std_scale
                 ##############################################################
                 x_0 = student_t.sample(x_1.size())
-                t   = torch.ones_like(x_1)*(nmoves_iter/nmoves)
-                dx_t = (x_1 - x_0)/t
+                t    = torch.rand_like(x_1)
+                x_t  = torch.cos(0.5*math.pi*t)*x_0 + torch.sin(0.5*math.pi*t)*x_1
+                dx_t = torch.cos(0.5*math.pi*t)*x_1 - torch.sin(0.5*math.pi*t)*x_0
+                dx_t *= (0.5*math.pi)
                 optimizer.zero_grad()
-                loss_batch = loss_fn(flow(x_1, input_batch/N_scale, t), dx_t)
+                loss_batch = loss_fn(flow(x_t, input_batch/N_scale, t), dx_t)
                 loss_batch.backward()
                 optimizer.step()
                 mean_loss += loss_batch.item()
