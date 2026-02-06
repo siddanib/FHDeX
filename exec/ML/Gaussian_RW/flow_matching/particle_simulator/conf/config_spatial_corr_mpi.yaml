@@ -1,0 +1,14 @@
+defaults:
+  - override /hydra/launcher: joblib
+
+n_avg : 20
+nmoves : 34
+n_thermal_steps: 0
+n_steps: 10
+n_samples: 20
+ncells: 100 # ensure that batch_size is > 2*nmoves
+
+hydra:
+  mode: 1
+  launcher:
+    n_jobs: 1
