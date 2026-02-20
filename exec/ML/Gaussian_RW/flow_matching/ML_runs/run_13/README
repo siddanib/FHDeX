@@ -1,0 +1,6 @@
+This case trains a transformer model for nmoves=1 and individual predictions for each face.
+
+The model leverages different type embedding to distinguish between N and F that are not of
+the same sequence length.
+
+"train_noise_free.py" and "train_2_noise_free.py" differ in the type of scaling that is leveraged.
