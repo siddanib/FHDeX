@@ -136,8 +136,8 @@ def realization_process (itr, cfg, flow, output_dir):
                                    input_batch_F/N_scale,
                                    n_steps=n_sampling_steps)
         # Change the standard deviation based on (N_left, N_right)
-        std_scale = 0.5*(torch.sqrt(torch.clamp(N_left_t, min=0.))
-                         + torch.sqrt(torch.clamp(N_right_t,min=0.)))
+        std_scale = torch.sqrt(torch.clamp(N_left_t, min=0.0)
+                               +torch.clamp(N_right_t,min=0.))
         std_scale = torch.clamp(std_scale,min=0.5)
         output_batch *= 0.2537*std_scale
         # Shift the mean based on (N_left-N_right)
