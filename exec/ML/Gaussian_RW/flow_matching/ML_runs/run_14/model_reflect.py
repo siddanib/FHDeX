@@ -142,7 +142,7 @@ class Flow_Transformer(Flow_Base):
 
         src_F_emb = self.input_F_proj(src_F) # (B, S-1, d_model)
         # Adding position embedding
-        src_F_emb = self.pos_enc(src_F)
+        src_F_emb = self.pos_enc(src_F_emb)
         # Encoder for F
         memory_F = self.encoder_F(src_F_emb).narrow(-2,-1,1)
         ## Concatenate along last dimension
