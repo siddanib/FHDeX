@@ -1,0 +1,31 @@
+defaults:
+  - override /hydra/launcher: joblib
+
+ic_type : "well"
+n_avg : 10
+nmoves : 1
+n_scale: 51
+n_thermal_steps: 500
+n_steps: 50
+n_samples: 25
+ncells: 100 # ensure that batch_size is > 2*nmoves
+df: 4.0
+model:
+  half_window : 4 # No of cells on each side
+  history_length : 10
+  n_layers     : 2
+  d_model :  256
+  n_head : 4
+  dropout : 0.0
+  act_func:
+    _target_ : "torch.nn.ReLU"
+  train: true
+  file_name: "outputs/2026-02-24/16-20-02/flow_transformer_2026-02-24_18-22-51.tar"
+  epoch_start: 0
+
+n_sampling_steps: 50
+
+hydra:
+  mode: 1
+  launcher:
+    n_jobs: 1
