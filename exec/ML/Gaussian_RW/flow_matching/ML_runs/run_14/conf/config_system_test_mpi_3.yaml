@@ -1,13 +1,14 @@
 defaults:
   - override /hydra/launcher: joblib
 
+device : "cuda"
 ic_type : "well"
 n_avg : 10
 nmoves : 1
 n_scale: 51
-n_thermal_steps: 500
-n_steps: 50
-n_samples: 25
+n_thermal_steps: 0
+n_steps: 500
+n_samples: 150
 ncells: 100 # ensure that batch_size is > 2*nmoves
 df: 4.0
 model:
@@ -23,7 +24,7 @@ model:
   file_name: "outputs/2026-02-24/16-20-02/flow_transformer_2026-02-24_18-22-51.tar"
   epoch_start: 0
 
-n_sampling_steps: 50
+n_sampling_steps: 10
 
 hydra:
   mode: 1

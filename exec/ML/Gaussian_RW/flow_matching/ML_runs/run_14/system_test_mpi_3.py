@@ -26,7 +26,8 @@ from helpers_extended_domain import convert_system_data_to_model_inputs
 from helpers_extended_domain import convert_model_outputs_to_system_data
 #######################################################
 
-torch.set_default_device('cpu')
+torch.set_default_dtype(torch.float32)
+torch.set_float32_matmul_precision('high')
 
 @torch.no_grad()
 def realization_process (itr, cfg, flow, output_dir):
@@ -104,6 +105,13 @@ def realization_process (itr, cfg, flow, output_dir):
                                    hist_len+1).clone()
         # Remove negative numbers that may have occured
         old_density = torch.clamp(old_density,min=0.)
+        # Get the N_left_reals and N_right_reals
+        old_density_r = torch.narrow(old_density,0,-1, 1).clone()
+        N_left_r = torch.zeros(ncells,1,1)
+        N_left_r[1:,0,0] = old_density_r[0,:-1]
+        N_left_r[0,0,0] = old_density_r[0,-1]
+        N_right_r = torch.zeros(ncells,1,1)
+        N_right_r[:,0,0] = old_density_r[0,:]
         ## These density states can be reals so convert them to integers
         od_floor = torch.floor(old_density)
         od_ceil = torch.ceil(old_density)
@@ -142,6 +150,10 @@ def realization_process (itr, cfg, flow, output_dir):
         output_batch *= 0.2537*std_scale
         # Shift the mean based on (N_left-N_right)
         output_batch += 0.069*(N_left_t-N_right_t)
+        ### Clamp based on N_left and N_right
+        output_batch = torch.clamp(output_batch, min=-N_right_r,
+                                   max=N_left_r)
+        ########################################################
         output_batch = output_batch.detach()
         mdl_flux_data[i_step,:] = output_batch[:,0,0]
         ################################################################
@@ -191,6 +203,14 @@ def fhd_data_run (cfg):
     # Get the unique rank of the current process
     app_rank = app_comm.Get_rank()
 
+    if cfg.device == "cpu":
+        torch.set_default_device('cpu')
+        device = torch.device("cpu")
+    else:
+        device_id = app_rank %4
+        torch.set_default_device(f"cuda:{device_id}")
+        device = torch.device(f"cuda:{device_id}")
+
     n_samples = cfg.n_samples
     ### Get the output_dir location
     output_dir = None
@@ -212,7 +232,7 @@ def fhd_data_run (cfg):
                             n_layers=n_layers,act_func = act_func)
     # Load the trained ML model
     chpt_fl = torch.load(cfg.model.file_name, weights_only=False,
-                         map_location=torch.device('cpu'))
+                         map_location=device)
     flow.load_state_dict(chpt_fl['model_state_dict'])
     flow.train(False)
     # Turn off gradients for the parameters
