@@ -1,7 +1,7 @@
 defaults:
   - override /hydra/launcher: joblib
 
-device : "cuda"
+device : "cpu"
 ic_type : "nonzero_well"
 n_avg : 10
 N_low : 5 ## This is specific to nonzero_well
@@ -9,23 +9,21 @@ N_high : 25 ## This is specific to nonzero_well
 nmoves : 1
 n_scale: 51
 n_thermal_steps: 0
-n_steps: 1
-n_samples: 1
-batch_size : 1250
+n_steps: 500
+n_samples: 40
 ncells: 100 # ensure that batch_size is > 2*nmoves
 df: 4.0
 model:
   half_window : 1 # No of cells on each side
   history_length : 10
-  n_layers     : 2
-  d_model :  256
+  n_layers     : 1
+  d_model :  128
   n_head : 4
   dropout : 0.0
   act_func:
     _target_ : "torch.nn.ReLU"
-  residual_con: true
-  train: false
-  file_name: "outputs/2026-03-03/18-02-59/flow_transformer_model_2026-03-04_00-27-20.tar"
+  train: true
+  file_name: "outputs/2026-02-27/14-50-09/flow_transformer_2026-02-27_18-02-19.tar"
   epoch_start: 0
 
 n_sampling_steps: 20

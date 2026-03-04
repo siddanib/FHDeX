@@ -217,7 +217,8 @@ def fhd_data_run (cfg):
                             num_decoder_layers=n_layers,
                             dropout = cfg.model.dropout,
                             max_len=50, d_embed=d_model,
-                            n_layers=n_layers,act_func = act_func)
+                            n_layers=n_layers,act_func = act_func,
+                            residual_con=cfg.model.residual_con)
     # Load the trained ML model
     chpt_fl = torch.load(cfg.model.file_name, weights_only=False,
                          map_location=device)
