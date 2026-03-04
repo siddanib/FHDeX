@@ -20,6 +20,7 @@ from random_walkers_pytorch import random_walk_v2
 from random_walkers_pytorch import random_walk_just_evolve
 from random_walkers_pytorch import get_uni_initial_pos
 from random_walkers_pytorch import get_well_initial_pos
+from random_walkers_pytorch import get_nonzero_well_initial_pos
 from random_walkers_pytorch import get_density
 from model_reflect import Flow_Transformer
 from helpers_extended_domain import convert_batched_system_data_to_model_inputs
@@ -69,6 +70,10 @@ def realization_process (itr, cfg, flow, output_dir):
         elif cfg.ic_type == "well":
             initial_pos = get_well_initial_pos(ncells, n_avg, 0.25, 0.75,
                                                len_system)
+        elif cfg.ic_type == "nonzero_well":
+            initial_pos = get_nonzero_well_initial_pos(ncells, cfg.N_low,
+                                                       cfg.N_high, 0.25, 0.75,
+                                                       len_system)
         else:
             sys.exit("Unknown ic_type")
         ### Thermalize the system ####################################

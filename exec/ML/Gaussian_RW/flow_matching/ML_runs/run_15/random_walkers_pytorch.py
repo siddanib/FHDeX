@@ -305,9 +305,36 @@ def get_well_initial_pos (ncells, par_per_cell,x_1,x_2,len_system=1.0):
     x_1_cc = cell_centers[x_1_ind]
     x_2_cc = cell_centers[x_2_ind]
     # Uniformly distribute half the particles on each side
-    left_pos = torch.linspace(1e-5,x_1_cc,int(num_par*0.5))
-    right_pos = torch.linspace(x_2_cc,len_system-1e-5,num_par-int(num_par*0.5))
+    left_pos = torch.linspace(1e-5,x_1_cc+0.5*dx,int(num_par*0.5))
+    right_pos = torch.linspace(x_2_cc-0.5*dx,len_system-1e-5,
+                               num_par-int(num_par*0.5))
     initial_pos = torch.cat([left_pos,right_pos])
+    return initial_pos
+
+# Non-zero well-shaped distribution of particles
+def get_nonzero_well_initial_pos (ncells, N_low, N_high, x_1, x_2,
+                                  len_system=1.0):
+    dx = len_system/ncells
+    cell_centers = torch.linspace(0.5*dx,len_system-0.5*dx,ncells)
+    # Range where initial number of particles is zero
+    x_1 *= len_system
+    x_2 *= len_system
+    x_1_ind = torch.searchsorted(cell_centers,x_1)-1
+    x_2_ind = torch.searchsorted(cell_centers,x_2)
+    x_1_cc = cell_centers[x_1_ind]
+    x_2_cc = cell_centers[x_2_ind]
+    # Distribute high val particles on both ends.
+    left_pos = torch.linspace(1e-5,x_1_cc+0.5*dx,int(N_high*(x_1_ind+1)))
+    right_pos = torch.linspace(x_2_cc-0.5*dx,len_system-1e-5,
+                               int(N_high*(ncells - x_2_ind)))
+    ### Distribute particles in the middle
+    if N_low > 0:
+        middle_pos = torch.linspace(x_1_cc+0.5*dx, x_2_cc-0.5*dx,
+                                    int(N_low*(x_2_ind-x_1_ind+1)))
+        #########################################################
+        initial_pos = torch.cat([left_pos, middle_pos, right_pos])
+    else:
+        initial_pos = torch.cat([left_pos, right_pos])
     return initial_pos
 
 def get_linear_initial_pos (ncells, left_val, right_val, len_system=1.0):
@@ -399,8 +426,40 @@ def test_get_flux ():
     assert torch.allclose(new_density_1, new_density_2)
     assert torch.allclose(new_density_2, new_density_3)
 
+def test_well ():
+    ncells=100
+    len_system=1.0
+    dx = len_system/ncells
+    cell_centers = torch.linspace(0.5*dx,len_system-0.5*dx,ncells)
+    par_per_cell = 10
+    x_1 = 0.25
+    x_2 = 0.75
+    initial_pos = get_well_initial_pos (ncells, par_per_cell,
+                                        x_1, x_2,
+                                        len_system=len_system)
+    density = get_density(cell_centers,initial_pos)
+    print(density)
+
+def test_nonzero_well ():
+    ncells=100
+    len_system=1.0
+    dx = len_system/ncells
+    cell_centers = torch.linspace(0.5*dx,len_system-0.5*dx,ncells)
+    N_low = 5
+    N_high = 25
+    x_1 = 0.25
+    x_2 = 0.75
+    initial_pos = get_nonzero_well_initial_pos (ncells, N_low, N_high,
+                                                x_1, x_2,
+                                                len_system=len_system)
+    density = get_density(cell_centers,initial_pos)
+    print(density)
+
 if __name__ == "__main__":
-    torch.set_default_device('cuda')
-    for _ in range(20):
-        test_get_density()
-        test_get_flux()
+    #torch.set_default_device('cuda')
+    #for _ in range(20):
+    #    test_get_density()
+    #    test_get_flux()
+
+    test_nonzero_well()
+    test_well()

@@ -22,16 +22,14 @@ from random_walkers_pytorch import get_uni_initial_pos
 from random_walkers_pytorch import get_well_initial_pos
 from random_walkers_pytorch import get_nonzero_well_initial_pos
 from random_walkers_pytorch import get_density
-from model_reflect import Flow_Transformer
-from helpers_extended_domain import convert_system_data_to_model_inputs
-from helpers_extended_domain import convert_model_outputs_to_system_data
+from spde_solver import get_dk_flux
 #######################################################
 
 torch.set_default_dtype(torch.float32)
 torch.set_float32_matmul_precision('high')
 
 @torch.no_grad()
-def realization_process (itr, cfg, flow, output_dir):
+def realization_process (itr, cfg, output_dir):
     # Setting num_threads inside subprocess function seems
     # vital for proper scaling
     torch.set_num_threads(1)
@@ -43,17 +41,10 @@ def realization_process (itr, cfg, flow, output_dir):
     left_boundary  = ["periodic", 0]
     right_boundary = ["periodic", 0]
     n_avg = cfg.n_avg
-    ####### ML Model related ################################
-    half_window = cfg.model.half_window
     ################################################################
     n_steps   = cfg.n_steps
     nmoves = cfg.nmoves # Number of steps of size dt
-    N_scale = cfg.n_scale
-    n_sampling_steps = cfg.n_sampling_steps
-    ## history_length
     hist_len = cfg.model.history_length
-    # Create StudentT distribution
-    student_t = torch.distributions.StudentT(cfg.df, loc=0., scale=1.0)
     ####################################################################
     cell_centers = torch.linspace(0.5*dx,len_system-0.5*dx,ncells)
     if cfg.ic_type == "uniform":
@@ -80,9 +71,9 @@ def realization_process (itr, cfg, flow, output_dir):
     ptcl_density_data[0, :] = density[:]
     ptcl_flux_data = torch.zeros((n_steps+hist_len, ncells))
 
-    mdl_density_data = torch.zeros_like(ptcl_density_data)
-    mdl_density_data[0, :] = density[:]
-    mdl_flux_data = torch.zeros_like(ptcl_flux_data)
+    dk_density_data = torch.zeros_like(ptcl_density_data)
+    dk_density_data[0, :] = density[:]
+    dk_flux_data = torch.zeros_like(ptcl_flux_data)
 
     # Get the hist_len steps
     for i_step in range(hist_len):
@@ -94,8 +85,8 @@ def realization_process (itr, cfg, flow, output_dir):
         ptcl_density_data[i_step+1, :] = density[:]
         ptcl_flux_data[i_step,:] = flux_ptcl[:]
 
-        mdl_density_data[i_step+1, :] = density[:]
-        mdl_flux_data[i_step,:] = flux_ptcl[:]
+        dk_density_data[i_step+1, :] = density[:]
+        dk_flux_data[i_step,:] = flux_ptcl[:]
 
     for i_step in range(hist_len, n_steps+hist_len):
         initial_pos, density, flux_ptcl = random_walk_v2(ncells, nmoves, dt,
@@ -105,69 +96,13 @@ def realization_process (itr, cfg, flow, output_dir):
 
         ptcl_density_data[i_step+1, :] = density[:]
         ptcl_flux_data[i_step,:] = flux_ptcl[:]
-        ###### ML model prediction ################################
-        old_density = torch.narrow(mdl_density_data, 0, i_step-hist_len,
-                                   hist_len+1).clone()
-        # Remove negative numbers that may have occured
-        old_density = torch.clamp(old_density,min=0.)
-        # Get the N_left_reals and N_right_reals
-        old_density_r = torch.narrow(old_density,0,-1, 1).clone()
-        N_left_r = torch.zeros(ncells,1,1)
-        N_left_r[1:,0,0] = old_density_r[0,:-1]
-        N_left_r[0,0,0] = old_density_r[0,-1]
-        N_right_r = torch.zeros(ncells,1,1)
-        N_right_r[:,0,0] = old_density_r[0,:]
-        ## These density states can be reals so convert them to integers
-        od_floor = torch.floor(old_density)
-        od_ceil = torch.ceil(old_density)
-        prob_tensr = torch.rand_like(old_density)
-        old_density_int = torch.where(prob_tensr < od_ceil-old_density,
-                                      od_floor, od_ceil)
-        # Similar for Flux
-        old_flux = torch.narrow(mdl_flux_data, 0, i_step-hist_len,
-                                hist_len).clone()
-        ## These fluxes can be reals so convert them to integers
-        od_floor = torch.floor(old_flux)
-        od_ceil = torch.ceil(old_flux)
-        prob_tensr = torch.rand_like(old_flux)
-        old_flux_int = torch.where(prob_tensr < od_ceil-old_flux,
-                                   od_floor, od_ceil)
-        #####################################################################
-        input_batch_N, input_batch_F = convert_system_data_to_model_inputs(
-                                                          old_density_int,
-                                                          old_flux_int,
-                                                          half_window)
-        # Scale the output instead of input
-        N_left_t = torch.narrow(input_batch_N, -2, -1, 1)
-        N_left_t = torch.narrow(N_left_t, -1,-half_window-1,1)
-
-        N_right_t = torch.narrow(input_batch_N, -2, -1, 1)
-        N_right_t = torch.narrow(N_right_t, -1,-half_window, 1)
-
-        x_0 = student_t.sample(N_left_t.size())
-        output_batch = flow.sample(x_0,input_batch_N/N_scale,
-                                   input_batch_F/N_scale,
-                                   n_steps=n_sampling_steps)
-        # Change the standard deviation based on (N_left, N_right)
-        std_scale = torch.sqrt(torch.clamp(N_left_t, min=0.0)
-                               +torch.clamp(N_right_t,min=0.))
-        std_scale = torch.clamp(std_scale,min=0.5)
-        output_batch *= 0.2537*std_scale
-        # Shift the mean based on (N_left-N_right)
-        output_batch += 0.069*(N_left_t-N_right_t)
-        ### Clamp based on N_left and N_right
-        output_batch = torch.clamp(output_batch, min=-N_right_r,
-                                   max=N_left_r)
         ########################################################
-        output_batch = output_batch.detach()
-        mdl_flux_data[i_step,:] = output_batch[:,0,0]
-        ################################################################
-        #### Get new ML density from ML flux ##############
-        ### Note this function only returns increment #######
-        new_density = convert_model_outputs_to_system_data(
-                                        output_batch.clone().squeeze(-1))
-        mdl_density_data[i_step+1,:] = new_density + mdl_density_data[i_step,:]
-        ###########################################################
+        old_dens_dk = dk_density_data[i_step,:]
+        new_dens_dk, flux_dk = get_dk_flux(old_dens_dk, ncells, dx, dt,
+                                           left_boundary, right_boundary,
+                                           nmoves)
+        dk_flux_data[i_step,:] = flux_dk[:]
+        dk_density_data[i_step+1,:] = new_dens_dk[:]
 
     # Remove the first hist_len steps from particle and model data
     ptcl_density_data = torch.narrow(ptcl_density_data.clone(), 0,
@@ -175,9 +110,9 @@ def realization_process (itr, cfg, flow, output_dir):
     ptcl_flux_data = torch.narrow(ptcl_flux_data.clone(), 0,
                                      hist_len, n_steps)
 
-    mdl_density_data = torch.narrow(mdl_density_data.clone(), 0,
+    dk_density_data = torch.narrow(dk_density_data.clone(), 0,
                                      hist_len, n_steps+1)
-    mdl_flux_data = torch.narrow(mdl_flux_data.clone(), 0,
+    dk_flux_data = torch.narrow(dk_flux_data.clone(), 0,
                                      hist_len, n_steps)
 
     dataset_name = os.path.join(output_dir,"system_temporal")
@@ -185,11 +120,11 @@ def realization_process (itr, cfg, flow, output_dir):
     with h5py.File(dataset_name+f"_{itr}"+".h5", mode="w") as f:
         f.create_dataset("ptcl_density_data"  , data=ptcl_density_data.cpu().numpy(),
                          dtype = np.float32)
-        f.create_dataset("mdl_density_data"  , data=mdl_density_data.cpu().numpy(),
+        f.create_dataset("dk_density_data"  , data=dk_density_data.cpu().numpy(),
                          dtype = np.float32)
         f.create_dataset("ptcl_flux_data"  , data=ptcl_flux_data.cpu().numpy(),
                          dtype = np.float32)
-        f.create_dataset("mdl_flux_data"  , data=mdl_flux_data.cpu().numpy(),
+        f.create_dataset("dk_flux_data"  , data=dk_flux_data.cpu().numpy(),
                          dtype = np.float32)
         f.create_dataset("ncells", data=ncells, dtype = 'i')
         f.create_dataset("N_avg", data=n_avg, dtype = 'i')
@@ -222,33 +157,10 @@ def fhd_data_run (cfg):
     if app_rank == 0:
         output_dir = HydraConfig.get().runtime.output_dir
     output_dir = app_comm.bcast(output_dir,root=0)
-    ####### ML Model related ################################
-    half_window = cfg.model.half_window
-    n_layers = cfg.model.n_layers
-    d_model = cfg.model.d_model
-    history_length = int(cfg.model.history_length)
-    act_func     = instantiate(cfg.model.act_func)
-    flow = Flow_Transformer(input_N_dim=2*half_window, input_F_dim=1,
-                            d_model = d_model, nhead=cfg.model.n_head,
-                            num_encoder_layers=n_layers,
-                            num_decoder_layers=n_layers,
-                            dropout = cfg.model.dropout,
-                            max_len=50, d_embed=d_model,
-                            n_layers=n_layers,act_func = act_func)
-    # Load the trained ML model
-    chpt_fl = torch.load(cfg.model.file_name, weights_only=False,
-                         map_location=device)
-    flow.load_state_dict(chpt_fl['model_state_dict'])
-    flow.train(False)
-    # Turn off gradients for the parameters
-    for param in flow.parameters():
-        param.requires_grad = False
-    # Torch compile
-    flow.compile()
     ###########################################################
     for ii in range(n_samples):
         itr = ii + app_rank*n_samples
-        realization_process(itr, cfg, flow, output_dir)
+        realization_process(itr, cfg, output_dir)
 
     app_comm.Barrier()
 
