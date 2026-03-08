@@ -7,7 +7,7 @@ import h5py
 ####### Local imports ################################
 from random_walkers_pytorch import random_walk_v2
 from random_walkers_pytorch import get_particle_positions
-from random_walkers_pytorch import boundary_asserts 
+from random_walkers_pytorch import boundary_asserts
 #######################################################
 """
 This function creates (input, output) pairs for faces
@@ -192,7 +192,7 @@ This function converts ML model's output to system data
 THIS ONLY PROVIDES INCREMENT FOR EACH CELL
 Expected model_ouputs shape:  (n_faces, 1)
 For periodic; nfaces = ncells
-For non-periodic; nfaces = ncells-1 
+For non-periodic; nfaces = ncells-1
 """
 @torch.no_grad()
 def convert_model_outputs_to_system_data (model_outputs,
@@ -217,7 +217,7 @@ This function converts ML model's output to BATCHED system data
 THIS ONLY PROVIDES INCREMENT FOR EACH CELL
 Expected model_ouputs shape:  (Batch*n_faces, 1)
 For periodic; nfaces = ncells
-For non-periodic; nfaces = ncells-1 
+For non-periodic; nfaces = ncells-1
 """
 @torch.no_grad()
 def convert_model_outputs_to_batched_system_data (model_outputs, batch_size,
@@ -233,7 +233,7 @@ def convert_model_outputs_to_batched_system_data (model_outputs, batch_size,
     else:
         flux_left = model_outputs.clone()
         flux_left = torch.nn.functional.pad(flux_left, (0,0,1,0),
-                                            "constant",0) 
+                                            "constant",0)
         flux_right = model_outputs.clone()
         flux_right = torch.nn.functional.pad(flux_right, (0,0,0,1),
                                              "constant", 0)
@@ -252,8 +252,8 @@ def add_extrnl_pot_net_ptcls_crsng(old_N, dt, alpha, beta,
     face_pos = torch.linspace(0., len_system, ncells+1)
     ## The calculation is being done in terms of density first
     ## and then converted to Number of particles later
-    dens_left = torch.zeros_like(face_pos)
-    dens_right = torch.zeros_like(face_pos)
+    dens_left = torch.zeros((*old_N.shape[:-1],ncells+1))
+    dens_right = torch.zeros_like(dens_left)
 
     dens_left[...,1:] = old_N[...,:]
     dens_right[...,:-1] = old_N[...,:]
