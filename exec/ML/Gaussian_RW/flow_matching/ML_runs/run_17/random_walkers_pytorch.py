@@ -213,6 +213,10 @@ def random_walk_v1(ncells, nmoves, dt, initial_pos,
     # Some asserts related to boundaries
     ##########################################
     periodic_boundary = boundary_asserts(left_boundary,right_boundary)
+    assert periodic_boundary
+    # Apply boundary effects
+    initial_pos = apply_boundary_effects(initial_pos,len_system,ncells,
+                                     left_boundary,right_boundary)
     ##########################################
     # total number of particles initially
     num_par = torch.numel(initial_pos)

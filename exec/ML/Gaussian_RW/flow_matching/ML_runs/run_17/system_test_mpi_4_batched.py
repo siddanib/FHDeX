@@ -72,6 +72,8 @@ def realization_process (itr, cfg, flow, output_dir):
         pot_beta += dx
     ####### ML Model related ################################
     half_window = cfg.model.half_window
+    if not periodic_boundary:
+        assert half_window == 1
     ################################################################
     n_steps   = cfg.n_steps
     nmoves = cfg.nmoves # Number of steps of size dt
@@ -247,6 +249,7 @@ def realization_process (itr, cfg, flow, output_dir):
     ##### Need to remove the ghost cells before saving the data
     if not periodic_boundary:
         ncells -= 2
+        len_system = ncells*dx
         ptcl_density_data = torch.narrow(ptcl_density_data, -1, 1,
                                          ncells)
         mdl_density_data = torch.narrow(mdl_density_data, -1, 1,

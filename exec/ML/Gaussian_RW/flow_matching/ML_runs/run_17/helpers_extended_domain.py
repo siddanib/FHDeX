@@ -243,7 +243,6 @@ def convert_model_outputs_to_batched_system_data (model_outputs, batch_size,
 """
 This function adds net particles crossing from Left to right
 due to external potential.
-ONLY designed for periodic boundaries for now
 input = old_N shape (..., ncells)
 """
 def add_extrnl_pot_net_ptcls_crsng(old_N, dt, alpha, beta,
