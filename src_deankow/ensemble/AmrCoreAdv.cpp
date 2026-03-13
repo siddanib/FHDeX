@@ -136,7 +136,7 @@ AmrCoreAdv::AmrCoreAdv ()
         }
 
         try {
-            m_ml_module = std::make_unique<torch::jit::script::Module>(
+            m_ml_module = std::make_unique<torch::jit::Module>(
                 torch::jit::load(m_ml_model_file));
         }
         catch (const c10::Error&) {

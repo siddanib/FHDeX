@@ -56,7 +56,7 @@ void FillMLStochFluxDir (int dir,
                          amrex::Geometry const& geom,
                          int hist_count, int history_len,
                          int flow_steps, amrex::Real flow_t0, amrex::Real flow_t1,
-                         torch::jit::script::Module* module,
+                         torch::jit::Module* module,
                          bool use_cuda, amrex::Real ml_input_scale,
                          amrex::Real ml_output_mn_fctr,
                          amrex::Real ml_output_std_fctr)

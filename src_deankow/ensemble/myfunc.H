@@ -11,9 +11,7 @@ using namespace amrex;
 
 namespace torch {
 namespace jit {
-namespace script {
 class Module;
-}
 }
 }
 
@@ -33,8 +31,12 @@ struct MLFluxContext {
     amrex::Real ml_output_std_fctr = 0.2537; 
     const amrex::MultiFab* phi_hist = nullptr;
     amrex::Array<amrex::MultiFab*, AMREX_SPACEDIM> flux_hist = {};
-    torch::jit::script::Module* module = nullptr;
-    bool use_cuda = (AMREX_USE_GPU) ? true :false;
+    torch::jit::Module* module = nullptr;
+#ifdef AMREX_USE_GPU	    
+    bool use_cuda = true;
+#else
+    bool use_cuda = false;
+#endif
 };
 
 void advance_phi (amrex::MultiFab& phi_old,

@@ -23,9 +23,7 @@
 
 namespace torch {
 namespace jit {
-namespace script {
 class Module;
-}
 }
 }
 
@@ -216,7 +214,7 @@ private:
     amrex::Real m_ml_output_mn_fctr = 0.069;
     amrex::Real m_ml_output_std_fctr = 0.2537;
     bool m_ml_use_cuda = false;
-    std::unique_ptr<torch::jit::script::Module> m_ml_module;
+    std::unique_ptr<torch::jit::Module> m_ml_module;
     amrex::Vector<std::unique_ptr<amrex::MultiFab>> m_phi_hist;
     amrex::Vector<amrex::Array<std::unique_ptr<amrex::MultiFab>, AMREX_SPACEDIM>> m_flux_hist;
     amrex::Vector<int> m_ml_hist_count;
