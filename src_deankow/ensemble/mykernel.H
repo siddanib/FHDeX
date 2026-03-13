@@ -2,6 +2,7 @@
 #define MY_KERNEL_H_
 
 #include <AMReX_FArrayBox.H>
+#include <FluxMode.H>
 
 AMREX_GPU_DEVICE AMREX_FORCE_INLINE
 void init_phi (int i, int j, int k,
@@ -180,12 +181,15 @@ AMREX_GPU_DEVICE AMREX_FORCE_INLINE
 void compute_flux_x (int i, int j, int k,
                      amrex::Array4<amrex::Real> const& fluxx,
                      amrex::Array4<amrex::Real> const& stochfluxx,
-                     amrex::Array4<amrex::Real const> const& phi, amrex::Real dxinv,
+                     amrex::Array4<amrex::Real const> const& phi,
+                     AMREX_D_DECL(amrex::Real dxinv, amrex::Real dyinv,amrex::Real dzinv),
+                     amrex::Real dt,
                      int lo, int hi, int dom_lo, int dom_hi, int bc_lo, int bc_hi,int Ncomp,
                      int a_ext_pot, amrex::Real a_alpha, amrex::Real a_beta,
-                     amrex::Real a_gamma, amrex::Real a_d_spde)
+                     amrex::Real a_gamma, amrex::Real a_d_spde,
+                     FluxMode flux_mode)
 {
-    int coeff_index = Ncomp-1;
+    int coeff_index = 0; //Ncomp-1;
     amrex::Real phibdry = 0.;
     amrex::Real stofact = 1.;
 
@@ -195,6 +199,8 @@ void compute_flux_x (int i, int j, int k,
     amrex::Real gamma = a_gamma;
 
     amrex::Real phip,phim, phipn, phimn;
+    phipn = amrex::Real(0.);
+    phimn = amrex::Real(0.);
 
 /*
     if (lo == dom_lo &&
@@ -225,91 +231,87 @@ void compute_flux_x (int i, int j, int k,
     }
 */
     //amrex::Print() << "BC info " << i << " " << dom_lo << " " << bc_lo << " " << dom_hi << " " << bc_hi << std::endl;
-    if (i == dom_lo && (bc_lo == amrex::BCType::foextrap || bc_lo == amrex::BCType::ext_dir)) {
+    bool wall_lo = (bc_lo == amrex::BCType::foextrap);
+    bool ext_dir_lo = (bc_lo == amrex::BCType::ext_dir);
 
+    bool wall_hi = (bc_hi == amrex::BCType::foextrap);
+    bool ext_dir_hi = (bc_hi == amrex::BCType::ext_dir);
+
+    if (i == dom_lo && ext_dir_lo) {
         stofact = std::sqrt(2.);
-
-        phim = 2.*phibdry - phi(i,j,k,0);
-        phip = phi(i,j,k,0);
-
-        //phimn = 2.*phibdry - phi(i,j,k,coeff_index);
-        //phipn = phi(i,j,k,coeff_index);
+        phim = 2.*phibdry - phi(i,j,k,coeff_index);
+        phip = phi(i,j,k,coeff_index);
         phimn = phibdry;
-        phipn = phibdry;
+        phipn = std::max(phip, amrex::Real(0.));
         //amrex::Print() << " A " << std::endl;
 
-    } else if (i == dom_hi+1 && (bc_hi == amrex::BCType::foextrap || bc_hi == amrex::BCType::ext_dir)) {
-
+    } else if (i == dom_hi+1 && ext_dir_hi) {
         stofact = std::sqrt(2.);
-        phip = 2.*phibdry - phi(i-1,j,k,0);
-        phim = phi(i-1,j,k,0);
-        //phipn = 2.*phibdry - phi(i-1,j,k,coeff_index);
-        //phimn = phi(i-1,j,k,coeff_index);
-        phimn = phibdry;
+        phip = 2.*phibdry - phi(i-1,j,k,coeff_index);
+        phim = phi(i-1,j,k,coeff_index);
+        phimn = std::max(phim, amrex::Real(0.));
         phipn = phibdry;
         //amrex::Print() << " B " << std::endl;
     } else {
 
         phip = phi(i,j,k,0);
         phim = phi(i-1,j,k,0);
-        phipn = std::abs(phi(i,j,k,coeff_index));
-        phimn = std::abs(phi(i-1,j,k,coeff_index));
+        phipn = std::max(phi(i,j,k,coeff_index), amrex::Real(0.));
+        phimn = std::max(phi(i-1,j,k,coeff_index), amrex::Real(0.));
         stofact = 1.;
         //amrex::Print() << " C " << std::endl;
 
     }
 
-//        amrex::Real phiavg = 2.*(phi(i,j,k)*phi(i-1,j,k))/(phi(i,j,k)+phi(i-1,j,k)+1.e-16);
-        //amrex::Real phiavg = 2.*(phip*phim)/(phip+phim+1.e-16);
-        //amrex::Real phiavg = 0.5*(phip+phim);
-
-        // HACK TO COMMENT OUT STOCHASTIC TERMS
-        // phiavg = 0.;
-
-        //fluxx(i,j,k,0) = 0.5*(phi(i,j,k,0)-phi(i-1,j,k,0)) * dxinv
-            //                    + stochfluxx(i,j,k) * std::sqrt(phiavg);
-          //amrex::Print() << " point " << i << " " << j << " " <<  dxinv << std::endl;
-          //amrex::Print() << "phip " << phip << std::endl;
-          //amrex::Print() << "phib " << phibdry << std::endl;
-          //amrex::Print() << "phi " << phi(i,j,k,0) << std::endl;
-          //amrex::Print() << "phim " << phim << std::endl;
-
-          // Note that Diffusion Coefficient changed from 0.5 to a_d_spde
-          fluxx(i,j,k,0) = a_d_spde*(phip-phim) * dxinv;
-
-          if(ext_pot == 1) {
-
-             amrex::Real xloc;
-             xloc = i / dxinv;
-             amrex::Real phiavg = 0.5*(phim+phip);
-
-             amrex::Real Vsubx;
-
-             Vsubx = 2.*(xloc - beta) * (xloc - alpha)* (2.*xloc - alpha - beta) / gamma;
-
-             fluxx(i,j,k,0) += phiavg * Vsubx;
-
-          }
-
-        if(Ncomp == 2){
-           fluxx(i,j,k,1) = fluxx(i,j,k,0);
-        }
-
-          amrex::Real sqphiavg = std::sqrt(2.*a_d_spde)*0.5*(std::sqrt(phipn)+std::sqrt(phimn));
-          fluxx(i,j,k,0) += stofact * stochfluxx(i,j,k) * sqphiavg;
-//          amrex::Print() << " x flux " << i << " " << j << " " << fluxx(i,j,k,0) << std::endl;
+    if (flux_mode == FluxMode::ml) {
+        // ML model predictions are in terms of N and they need to be converted to 
+        // number density
+        amrex::Real dvolinv = AMREX_D_TERM(dxinv,*dyinv,*dzinv);
+        // Note that volume for boundary faces is half the actual volume
+        dvolinv *=  stofact*stofact;
+        amrex::Real ml_flux  = stochfluxx(i,j,k); 
+        // Convert from number of particles to number density  
+        // Note that the boundary face is also only half cell size away
+        ml_flux *= (dvolinv/(stofact*stofact*dxinv*dt));
+        // Need to change the sign as ML model treats flux left to right positive
+        fluxx(i,j,k,coeff_index) = -ml_flux;
+    }
+    else {
+        // Note that Diffusion Coefficient changed from 0.5 to a_d_spde
+        fluxx(i,j,k,coeff_index) = a_d_spde*(phip-phim) * dxinv;
+        amrex::Real sqphiavg = std::sqrt(2.*a_d_spde)*0.5*(std::sqrt(phipn)+std::sqrt(phimn));
+        fluxx(i,j,k,coeff_index) += stofact * stochfluxx(i,j,k) * sqphiavg;
+    }
+    if(ext_pot == 1) {
+       amrex::Real xloc;
+       xloc = i / dxinv;
+       amrex::Real phiavg = 0.5*(phim+phip);
+       amrex::Real Vsubx;
+       // Note: External potential logicv is incorrect for periodic boundaries
+       Vsubx = 2.*(xloc - beta) * (xloc - alpha)* (2.*xloc - alpha - beta) / gamma;
+       fluxx(i,j,k,coeff_index) += phiavg * Vsubx;
+    }
+    // If the boundary is a wall flux has to be ZERO
+    if (i == dom_lo && wall_lo) {
+        fluxx(i,j,k,coeff_index) = amrex::Real(0.);
+    } else if (i == dom_hi+1 && wall_hi) {
+        fluxx(i,j,k,coeff_index) = amrex::Real(0.);
+    }
 }
 
 AMREX_GPU_DEVICE AMREX_FORCE_INLINE
 void compute_flux_y (int i, int j, int k,
                      amrex::Array4<amrex::Real> const& fluxy,
                      amrex::Array4<amrex::Real> const& stochfluxy,
-                     amrex::Array4<amrex::Real const> const& phi, amrex::Real dyinv,
+                     amrex::Array4<amrex::Real const> const& phi,
+                     AMREX_D_DECL(amrex::Real dxinv, amrex::Real dyinv,amrex::Real dzinv),
+                     amrex::Real dt,
                      int lo, int hi, int dom_lo, int dom_hi, int bc_lo, int bc_hi, int Ncomp,
                      int a_ext_pot, amrex::Real a_alpha, amrex::Real a_beta,
-                     amrex::Real a_gamma, amrex::Real a_d_spde)
+                     amrex::Real a_gamma, amrex::Real a_d_spde,
+                     FluxMode flux_mode)
 {
-    int coeff_index = Ncomp-1;
+    int coeff_index = 0; //Ncomp-1;
     amrex::Real phibdry = 0.;
     amrex::Real stofact = 1.;
 
@@ -319,88 +321,101 @@ void compute_flux_y (int i, int j, int k,
     amrex::Real gamma = a_gamma;
 
     amrex::Real phip,phim, phipn, phimn;
+    phipn = amrex::Real(0.);
+    phimn = amrex::Real(0.);
 
-    if (j == dom_lo && (bc_lo == amrex::BCType::foextrap || bc_lo == amrex::BCType::ext_dir))
+    bool wall_lo = (bc_lo == amrex::BCType::foextrap);
+    bool ext_dir_lo = (bc_lo == amrex::BCType::ext_dir);
+
+    bool wall_hi = (bc_hi == amrex::BCType::foextrap);
+    bool ext_dir_hi = (bc_hi == amrex::BCType::ext_dir);
+
+    if (j == dom_lo && ext_dir_lo)
     {
-
         stofact = std::sqrt(2.);
-        phim = 2.*phibdry - phi(i,j,k,0);
-        phip = phi(i,j,k,0);
-        //phimn = 2.*phibdry - std::abs(phi(i,j,k,coeff_index));
-        //phipn = std::abs( phi(i,j,k,coeff_index));
-        phipn = phibdry;
+        phim = 2.*phibdry - phi(i,j,k,coeff_index);
+        phip = phi(i,j,k,coeff_index);
         phimn = phibdry;
+        phipn = std::max(phip, amrex::Real(0.));
 
-    } else if (j == dom_hi+1 && (bc_hi == amrex::BCType::foextrap || bc_hi == amrex::BCType::ext_dir)) {
-
+    } else if (j == dom_hi+1 && ext_dir_hi) {
         stofact = std::sqrt(2.);
-        phip = 2.*phibdry - phi(i,j-1,k,0);
-        phim = phi(i,j-1,k,0);
-        //phipn = 2.*phibdry - std::abs(phi(i,j-1,k,coeff_index));
-        //phimn = std::abs(phi(i,j-1,k,coeff_index));
+        phip = 2.*phibdry - phi(i,j-1,k,coeff_index);
+        phim = phi(i,j-1,k,coeff_index);
         phipn = phibdry;
-        phimn = phibdry;
+        phimn = std::max(phim, amrex::Real(0.));
 
      } else {
 
-        phip = phi(i,j,k,0);
-        phim = phi(i,j-1,k,0);
-        phipn = std::abs(phi(i,j,k,coeff_index));
-        phimn = std::abs(phi(i,j-1,k,coeff_index));
+        phip = phi(i,j,k,coeff_index);
+        phim = phi(i,j-1,k,coeff_index);
+        phipn = std::max(phi(i,j,k,coeff_index), amrex::Real(0.));
+        phimn = std::max(phi(i,j-1,k,coeff_index), amrex::Real(0.));
         stofact = 1.;
 
     }
-//        amrex::Real phiavg = 2.*(phi(i,j,k)*phi(i,j-1,k))/(phi(i,j,k)+phi(i,j-1,k)+1.e-16);
-        //amrex::Real phiavg = 2.*(phip*phim)/(phip+phim+1.e-16);
-        //amrex::Real phiavg = 0.5*(phip+phim);
-
-        // HACK TO COMMENT OUT STOCHASTIC TERMS
-        // phiavg = 0.;
-
-        //fluxy(i,j,k,0) = 0.5*(phi(i,j,k,0)-phi(i,j-1,k,0)) * dyinv
-        //+ stochfluxy(i,j,k)* std::sqrt(phiavg);
-
+    if (flux_mode == FluxMode::ml) {
+        // ML model predictions are in terms of N and they need to be converted to 
+        // number density
+        amrex::Real dvolinv = AMREX_D_TERM(dxinv,*dyinv,*dzinv);
+        // Note that volume for boundary faces is half the actual volume
+        dvolinv *=  stofact*stofact;
+        amrex::Real ml_flux  = stochfluxy(i,j,k); 
+        // Convert from number of particles to number density 
+        // Note that the boundary face is also only half cell size away
+        ml_flux *= (dvolinv/(stofact*stofact*dyinv*dt));
+        // Need to change the sign as ML model treats flux left to right positive
+        fluxy(i,j,k,coeff_index) = -ml_flux;
+    } else {
         // Note that Diffusion Coefficient changed from 0.5 to a_d_spde
-        fluxy(i,j,k,0) = a_d_spde*(phip-phim) * dyinv;
-
-          if(ext_pot == 1) {
-
-             amrex::Real yloc;
-             yloc = j / dyinv;
-             amrex::Real phiavg = 0.5*(phip+phim);
-
-             amrex::Real Vsuby;
-
-             Vsuby = 4.*(yloc - .5)*(yloc - .5)*(yloc - .5) / gamma;
-
-             fluxy(i,j,k,0) += phiavg * Vsuby;
-
-          }
-
-        if(Ncomp == 2){
-           fluxy(i,j,k,1) = fluxy(i,j,k,0);
-        }
-
+        fluxy(i,j,k,coeff_index) = a_d_spde*(phip-phim) * dyinv;
         amrex::Real sqphiavg = std::sqrt(2.0*a_d_spde)*0.5*(std::sqrt(phipn)+std::sqrt(phimn));
-
-        fluxy(i,j,k,0) += stofact * stochfluxy(i,j,k)* sqphiavg;
-//        amrex::Print() << " y flux " << i << " " << j << " " << fluxy(i,j,k,0) << std::endl;
+        fluxy(i,j,k,coeff_index) += stofact * stochfluxy(i,j,k)* sqphiavg;
+    }
+    if(ext_pot == 1) {
+       amrex::Real yloc;
+       yloc = j / dyinv;
+       amrex::Real phiavg = 0.5*(phip+phim);
+       amrex::Real Vsuby;
+       Vsuby = 4.*(yloc - .5)*(yloc - .5)*(yloc - .5) / gamma;
+       fluxy(i,j,k,0) += phiavg * Vsuby;
+    }
+    // If the boundary is a wall flux has to be ZERO
+    if (j == dom_lo && wall_lo) {
+        fluxy(i,j,k,coeff_index) = amrex::Real(0.);
+    } else if (j == dom_hi+1 && wall_hi) {
+        fluxy(i,j,k,coeff_index) = amrex::Real(0.);
+    }
 }
 
 
 #if (AMREX_SPACEDIM > 2)
+// Note to self: Bhargav, You didn't read this function yet.
 AMREX_GPU_DEVICE AMREX_FORCE_INLINE
 void compute_flux_z (int i, int j, int k,
                      amrex::Array4<amrex::Real> const& fluxz,
                      amrex::Array4<amrex::Real> const& stochfluxz,
-                     amrex::Array4<amrex::Real const> const& phi, amrex::Real dzinv,
+                     amrex::Array4<amrex::Real const> const& phi,
+                     AMREX_D_DECL(amrex::Real dxinv, amrex::Real dyinv,amrex::Real dzinv),
+                     amrex::Real dt,
                      int lo, int hi, int dom_lo, int dom_hi, int bc_lo, int bc_hi, int Ncomp,
                      int a_ext_pot, amrex::Real a_alpha, amrex::Real a_beta,
-                     amrex::Real a_gamma, amrex::Real a_d_spde)
+                     amrex::Real a_gamma, amrex::Real a_d_spde,
+                     FluxMode flux_mode)
 {
     amrex::ignore_unused(a_alpha, a_beta, a_gamma);
     if (a_ext_pot) {
         amrex::Abort("External potential not coded in 3D scenario yet.\n");
+    }
+
+    bool wall_lo = (bc_lo == amrex::BCType::foextrap);
+    bool ext_dir_lo = (bc_lo == amrex::BCType::ext_dir);
+
+    bool wall_hi = (bc_hi == amrex::BCType::foextrap);
+    bool ext_dir_hi = (bc_hi == amrex::BCType::ext_dir);
+
+    if (flux_mode == FluxMode::ml) {
+        amrex::Abort("3D implementation is NOT implemented for ML version");
     }
 
     int coeff_index = Ncomp-1;

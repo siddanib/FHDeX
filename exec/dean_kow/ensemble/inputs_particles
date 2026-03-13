@@ -30,6 +30,25 @@ bc_hi = 0 0
 
 is_ensemble_dir = 0 1
 diffusion_coefficient = 0.5
+flux_mode = gaussian
+ml_model_file = model.pt
+ml_history_len = 10
+ml_history_ngrow = 1
+# ML flow-matching settings (used when flux_mode = ml)
+# ml_flow_steps: number of Euler steps on t in [ml_flow_t0, ml_flow_t1]
+# ml_flow_t0, ml_flow_t1: integration time interval
+# ml_t_df, ml_t_loc, ml_t_scale: Student's t parameters for x0 sampling
+# ml_input_scale: scales phi/flux inputs before they are fed to the model
+# ml_output_mn_fctr, ml_output_std_fctr: rescale model outputs back to flux units
+ml_flow_steps = 100
+ml_flow_t0 = 0.0
+ml_flow_t1 = 1.0
+ml_t_df = 4.0
+ml_t_loc = 0.0
+ml_t_scale = 1.0
+ml_input_scale = 51.0
+ml_output_mn_fctr = 0.069
+ml_output_std_fctr = 0.2537
 
 ext_pot.exists = 0
 remove_particle_history = "false"

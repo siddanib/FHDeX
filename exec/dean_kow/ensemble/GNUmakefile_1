@@ -1,0 +1,56 @@
+PRECISION  = DOUBLE
+PROFILE    = FALSE
+
+DEBUG      = TRUE
+DEBUG      = FALSE
+
+DIM        = 2
+
+MAX_SPEC   = 8
+
+COMP       = gnu
+
+USE_MPI    = TRUE
+USE_OMP    = FALSE
+USE_CUDA   = FALSE
+
+USE_PARTICLES = TRUE
+
+Bpack   := ./Make.package
+Blocs   := .
+
+include Make.Adv
+
+# libtorch configuration
+# Override PYTORCH_ROOT to point at an extracted libtorch distribution.
+ifeq ($(USE_CUDA),TRUE)
+  PYTORCH_ROOT ?= /path/to/libtorch_cuda
+else
+  PYTORCH_ROOT ?= /path/to/libtorch_cpu
+endif
+
+TORCH_INCLUDES = $(PYTORCH_ROOT)/include \
+                 $(PYTORCH_ROOT)/include/torch/csrc/api/include
+TORCH_LIBPATH  = $(PYTORCH_ROOT)/lib
+
+# libtorch depends on the compiler ABI matching the downloaded package.
+TORCH_CXX11_ABI ?= 1
+
+# libtorch requires C++17 or newer.
+CXXFLAGS += -std=c++17
+DEFINES  += -D_GLIBCXX_USE_CXX11_ABI=$(TORCH_CXX11_ABI)
+
+INCLUDE_LOCATIONS += $(TORCH_INCLUDES)
+LIBRARY_LOCATIONS += $(TORCH_LIBPATH)
+
+# Keep search paths / rpath in linker flags and actual libraries in LIBRARIES.
+LDFLAGS += -Wl,--no-as-needed
+LDFLAGS += -Wl,-rpath,$(TORCH_LIBPATH)
+
+ifeq ($(USE_CUDA),TRUE)
+  TORCH_LIBS = -ltorch -ltorch_cpu -ltorch_cuda -lc10 -lc10_cuda
+else
+  TORCH_LIBS = -ltorch -ltorch_cpu -lc10
+endif
+
+LIBRARIES += $(TORCH_LIBS)

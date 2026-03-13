@@ -5,6 +5,7 @@
 #include <AMReX_PlotFileUtil.H>
 #include <AMReX_VisMF.H>
 #include <AMReX_PhysBCFunct.H>
+#include <torch/script.h>
 
 #ifdef AMREX_MEM_PROFILING
 #include <AMReX_MemProfiler.H>
@@ -15,6 +16,7 @@
 #include <mykernel.H>
 #include <myfunc.H>
 #include "chrono"
+#include <algorithm>
 
 using namespace amrex;
 using namespace std::chrono;
@@ -89,6 +91,9 @@ AmrCoreAdv::AmrCoreAdv ()
 
     phi_new.resize(nlevs_max);
     phi_old.resize(nlevs_max);
+    m_phi_hist.resize(nlevs_max);
+    m_flux_hist.resize(nlevs_max);
+    m_ml_hist_count.resize(nlevs_max, 0);
 
     bcs.resize(1);     // Setup 1-component
     for (int idim = 0; idim < AMREX_SPACEDIM; ++idim)
@@ -124,6 +129,28 @@ AmrCoreAdv::AmrCoreAdv ()
     // fillpatcher[lev] is for filling data on level lev using the data on
     // lev-1 and lev.
     fillpatcher.resize(nlevs_max+1);
+
+    if (m_flux_mode == FluxMode::ml) {
+        if (m_ml_model_file.empty()) {
+            amrex::Abort("flux_mode=ml requires ml_model_file to be set.");
+        }
+
+        try {
+            m_ml_module = std::make_unique<torch::jit::script::Module>(
+                torch::jit::load(m_ml_model_file));
+        }
+        catch (const c10::Error&) {
+            amrex::Abort("Error loading the TorchScript model.");
+        }
+
+#ifdef AMREX_USE_CUDA
+        m_ml_use_cuda = true;
+        m_ml_module->to(torch::kCUDA);
+#else
+        m_ml_use_cuda = false;
+#endif
+        amrex::Print() << "ML model loaded: " << m_ml_model_file << "\n";
+    }
 }
 
 AmrCoreAdv::~AmrCoreAdv () = default;
@@ -329,6 +356,8 @@ AmrCoreAdv::MakeNewLevelFromCoarse (int lev, Real time, const BoxArray& ba,
         flux_reg[lev] = std::make_unique<FluxRegister>(ba, dm, refRatio(lev-1), lev, ncomp);
     }
 
+    InitMLHistoryLevel(lev, ba, dm);
+
     FillCoarsePatch(lev, time, phi_new[lev], 0, ncomp);
 }
 
@@ -366,6 +395,26 @@ AmrCoreAdv::RemakeLevel (int lev, Real time, const BoxArray& ba,
         flux_reg[lev] = std::make_unique<FluxRegister>(ba, dm, refRatio(lev-1), lev, ncomp);
     }
 
+    if (m_flux_mode == FluxMode::ml && m_ml_history_len > 0) {
+        auto new_hist = std::make_unique<MultiFab>(ba, dm, m_ml_history_len, m_ml_history_ngrow);
+        new_hist->setVal(0.0);
+        if (m_phi_hist[lev]) {
+            new_hist->ParallelCopy(*m_phi_hist[lev], 0, 0, m_ml_history_len);
+        }
+        m_phi_hist[lev].swap(new_hist);
+
+        for (int d = 0; d < AMREX_SPACEDIM; ++d) {
+            BoxArray fba = ba;
+            fba.surroundingNodes(d);
+            auto new_flux_hist = std::make_unique<MultiFab>(fba, dm, m_ml_history_len, m_ml_history_ngrow);
+            new_flux_hist->setVal(0.0);
+            if (m_flux_hist[lev][d]) {
+                new_flux_hist->ParallelCopy(*m_flux_hist[lev][d], 0, 0, m_ml_history_len);
+            }
+            m_flux_hist[lev][d].swap(new_flux_hist);
+        }
+    }
+
 #ifdef AMREX_PARTICLES
         if (lev == 1) {
             particleData.regrid_particles(grown_fba, ba, old_fine_ba, phi_new[1]);
@@ -380,6 +429,13 @@ AmrCoreAdv::ClearLevel (int lev)
 {
     phi_new[lev].clear();
     phi_old[lev].clear();
+    if (m_flux_mode == FluxMode::ml) {
+        m_phi_hist[lev].reset();
+        for (int d = 0; d < AMREX_SPACEDIM; ++d) {
+            m_flux_hist[lev][d].reset();
+        }
+        m_ml_hist_count[lev] = 0;
+    }
     flux_reg[lev].reset(nullptr);
     fillpatcher[lev].reset(nullptr);
 }
@@ -418,6 +474,8 @@ void AmrCoreAdv::MakeNewLevelFromScratch (int lev, Real time, const BoxArray& ba
         flux_reg[lev] = std::make_unique<FluxRegister>(ba, dm, refRatio(lev-1), lev, ncomp);
     }
 
+    InitMLHistoryLevel(lev, ba, dm);
+
     const auto problo = Geom(lev).ProbLoArray();
     const auto dx     = Geom(lev).CellSizeArray();
 
@@ -444,6 +502,71 @@ void AmrCoreAdv::MakeNewLevelFromScratch (int lev, Real time, const BoxArray& ba
         }
     } else {
         phi_new[lev].ParallelCopy(phi_new[lev-1], 0, 0, phi_new[lev].nComp());
+    }
+}
+
+void
+AmrCoreAdv::InitMLHistoryLevel (int lev, const BoxArray& ba, const DistributionMapping& dm)
+{
+    if (m_flux_mode != FluxMode::ml || m_ml_history_len <= 0) {
+        return;
+    }
+
+    m_phi_hist[lev] = std::make_unique<MultiFab>(ba, dm, m_ml_history_len, m_ml_history_ngrow);
+    m_phi_hist[lev]->setVal(0.0);
+
+    for (int d = 0; d < AMREX_SPACEDIM; ++d) {
+        BoxArray fba = ba;
+        fba.surroundingNodes(d);
+        m_flux_hist[lev][d] = std::make_unique<MultiFab>(fba, dm, m_ml_history_len, 0);
+        m_flux_hist[lev][d]->setVal(0.0);
+    }
+
+    m_ml_hist_count[lev] = 0;
+}
+
+// phi and flux histories are being updated at different locations because
+// flux history should NOT include external potential effects
+// Furthermore, flux history is in NET PARTICLES CROSSING and NOT NUMBER DENSITY
+void
+AmrCoreAdv::UpdateMLPhiHistory (int lev)
+{
+    if (m_flux_mode != FluxMode::ml || m_ml_history_len <= 0) {
+        return;
+    }
+
+    AMREX_ASSERT(m_phi_hist[lev]);
+
+    auto& phi_hist = *m_phi_hist[lev];
+    const int hist_len = m_ml_history_len;
+    const int count = m_ml_hist_count[lev];
+
+    if (count < hist_len) {
+        const int head = count;
+
+        amrex::MultiFab::Copy(phi_hist, phi_old[lev], 0, head, 1, 0);
+        phi_hist.FillBoundary(Geom(lev).periodicity());
+
+        m_ml_hist_count[lev] = count + 1;
+    }
+    else {
+    	// History full: shift left by 1 to keep most recent hist_len entries.
+        // Create temporary duplicates 
+        amrex::MultiFab phi_hist_copy(phi_hist.boxArray(),
+                                      phi_hist.DistributionMap(),
+                                      phi_hist.nComp()-1, 0);
+    	amrex::MultiFab::Copy(phi_hist_copy, phi_hist, 1, 0,
+                              phi_hist.nComp()-1, 0);
+        // Swap the first  hist_len-1 to phi_hist
+        amrex::MultiFab::Swap(phi_hist, phi_hist_copy, 0, 0,
+                              phi_hist.nComp()-1, 0);
+
+    	const int head = hist_len - 1;
+    	amrex::MultiFab::Copy(phi_hist, phi_old[lev], 0, head, 1, 0);
+
+    	phi_hist.FillBoundary(Geom(lev).periodicity());
+
+    	m_ml_hist_count[lev] = hist_len;
     }
 }
 
@@ -521,6 +644,61 @@ AmrCoreAdv::ReadParameters ( amrex::Vector<int>& bc_lo, amrex::Vector<int>& bc_h
         alg_type = 0;
         pp.queryAdd("alg_type", alg_type);
 
+        m_flux_mode = FluxMode::gaussian;
+        pp.query("flux_mode", m_flux_mode);
+
+        pp.query("ml_model_file", m_ml_model_file);
+        m_ml_history_len = 10;
+        pp.query("ml_history_len", m_ml_history_len);
+        m_ml_history_ngrow = 1;
+        pp.query("ml_history_ngrow", m_ml_history_ngrow);
+        if (m_ml_history_len < 0 || m_ml_history_ngrow < 0) {
+            amrex::Abort("ml_history_len and ml_history_ngrow must be non-negative.");
+        }
+        if (m_flux_mode == FluxMode::ml && m_ml_history_len < 1) {
+            amrex::Abort("ml_history_len must be >= 1 when flux_mode=ml.");
+        }
+        if (m_flux_mode == FluxMode::ml && m_ml_history_ngrow < 1) {
+            amrex::Abort("ml_history_ngrow must be >= 1 when flux_mode=ml.");
+        }
+
+        m_ml_flow_steps = 100;
+        pp.query("ml_flow_steps", m_ml_flow_steps);
+        m_ml_flow_t0 = 0.0;
+        pp.query("ml_flow_t0", m_ml_flow_t0);
+        m_ml_flow_t1 = 1.0;
+        pp.query("ml_flow_t1", m_ml_flow_t1);
+        if (m_ml_flow_steps < 1) {
+            amrex::Abort("ml_flow_steps must be >= 1.");
+        }
+        if (m_ml_flow_t1 <= m_ml_flow_t0) {
+            amrex::Abort("ml_flow_t1 must be greater than ml_flow_t0.");
+        }
+
+        m_ml_t_df = 4.0;
+        pp.query("ml_t_df", m_ml_t_df);
+        m_ml_t_loc = 0.0;
+        pp.query("ml_t_loc", m_ml_t_loc);
+        m_ml_t_scale = 1.0;
+        pp.query("ml_t_scale", m_ml_t_scale);
+        m_ml_input_scale = 51.0;
+        pp.query("ml_input_scale", m_ml_input_scale);
+        m_ml_output_mn_fctr = 0.069;
+        pp.query("ml_output_mn_fctr", m_ml_output_mn_fctr);
+        m_ml_output_std_fctr = 0.2537;
+        pp.query("ml_output_std_fctr", m_ml_output_std_fctr);
+        if (m_ml_t_df <= 0.0) {
+            amrex::Abort("ml_t_df must be > 0.");
+        }
+        if (m_ml_t_scale <= 0.0) {
+            amrex::Abort("ml_t_scale must be > 0.");
+        }
+        if (m_ml_input_scale <= 0.0) {
+            amrex::Abort("ml_input_scale must be > 0.");
+        }
+        if (m_ml_output_std_fctr <= 0.0) {
+            amrex::Abort("ml_output_std_fctr must be > 0.");
+        }
 
         // read in BC; see Src/Base/AMReX_BC_TYPES.H for supported types
         pp.queryarr("bc_lo", bc_lo);
@@ -1090,6 +1268,16 @@ AmrCoreAdv::WriteCheckpointFile () const
        }
        HeaderFile << "\n";
 
+       if (m_flux_mode == FluxMode::ml && m_ml_history_len > 0) {
+           HeaderFile << "ml_history_len " << m_ml_history_len << "\n";
+           HeaderFile << "ml_history_ngrow " << m_ml_history_ngrow << "\n";
+           HeaderFile << "ml_hist_count ";
+           for (int lev = 0; lev <= finest_level; ++lev) {
+               HeaderFile << m_ml_hist_count[lev] << " ";
+           }
+           HeaderFile << "\n";
+       }
+
        // write the BoxArray at each level
        for (int lev = 0; lev <= finest_level; ++lev) {
            boxArray(lev).writeOn(HeaderFile);
@@ -1101,6 +1289,15 @@ AmrCoreAdv::WriteCheckpointFile () const
    for (int lev = 0; lev <= finest_level; ++lev) {
        VisMF::Write(phi_new[lev],
                     amrex::MultiFabFileFullPrefix(lev, checkpointname, "Level_", "phi"));
+       if (m_flux_mode == FluxMode::ml && m_ml_history_len > 0) {
+           VisMF::Write(*m_phi_hist[lev],
+                        amrex::MultiFabFileFullPrefix(lev, checkpointname, "Level_", "phi_hist"));
+           const char* flux_names[] = {"flux_hist_x", "flux_hist_y", "flux_hist_z"};
+           for (int d = 0; d < AMREX_SPACEDIM; ++d) {
+               VisMF::Write(*m_flux_hist[lev][d],
+                            amrex::MultiFabFileFullPrefix(lev, checkpointname, "Level_", flux_names[d]));
+           }
+       }
    }
 
 #ifdef AMREX_PARTICLES
@@ -1172,6 +1369,78 @@ AmrCoreAdv::ReadCheckpointFile ()
         }
     }
 
+    int header_ml_history_len = m_ml_history_len;
+    int header_ml_history_ngrow = m_ml_history_ngrow;
+    Vector<int> header_ml_hist_count;
+    bool has_ml_header = false;
+    std::streampos pos = is.tellg();
+    std::string peek;
+    std::getline(is, peek);
+    if (peek.empty()) {
+        std::getline(is, peek);
+    }
+    if (peek.rfind("ml_history_len", 0) == 0) {
+        has_ml_header = true;
+        {
+            std::istringstream lis(peek);
+            std::string key;
+            lis >> key >> header_ml_history_len;
+        }
+
+        std::getline(is, line);
+        {
+            std::istringstream lis(line);
+            std::string key;
+            lis >> key >> header_ml_history_ngrow;
+        }
+
+        std::getline(is, line);
+        {
+            std::istringstream lis(line);
+            std::string key;
+            lis >> key;
+            if (key == "ml_hist_head") {
+                // Backward-compat: ignore stored head values.
+                // Next line should contain ml_hist_count.
+                std::getline(is, line);
+                std::istringstream lis2(line);
+                std::string key2;
+                lis2 >> key2;
+                int v;
+                while (lis2 >> v) {
+                    header_ml_hist_count.push_back(v);
+                }
+            } else if (key == "ml_hist_count") {
+                int v;
+                while (lis >> v) {
+                    header_ml_hist_count.push_back(v);
+                }
+            }
+        }
+    } else {
+        is.seekg(pos);
+    }
+
+    if (m_flux_mode == FluxMode::ml && has_ml_header) {
+        m_ml_history_len = header_ml_history_len;
+        m_ml_history_ngrow = header_ml_history_ngrow;
+        if (m_ml_history_len < 1) {
+            amrex::Abort("Restart checkpoint has invalid ml_history_len for flux_mode=ml.");
+        }
+        if (m_ml_history_ngrow < 1) {
+            amrex::Abort("Restart checkpoint has invalid ml_history_ngrow for flux_mode=ml.");
+        }
+        for (int lev = 0; lev <= finest_level; ++lev) {
+            if (lev < header_ml_hist_count.size()) {
+                m_ml_hist_count[lev] = header_ml_hist_count[lev];
+            }
+        }
+    } else if (m_flux_mode == FluxMode::ml && !has_ml_header) {
+        for (int lev = 0; lev <= finest_level; ++lev) {
+            m_ml_hist_count[lev] = 0;
+        }
+    }
+
     for (int lev = 0; lev <= finest_level; ++lev) {
 
         // read in level 'lev' BoxArray from Header
@@ -1202,12 +1471,32 @@ AmrCoreAdv::ReadCheckpointFile ()
         if (lev > 0 && do_reflux) {
             flux_reg[lev] = std::make_unique<FluxRegister>(grids[lev], dmap[lev], refRatio(lev-1), lev, ncomp);
         }
+
+        if (m_flux_mode == FluxMode::ml && m_ml_history_len > 0) {
+            m_phi_hist[lev] = std::make_unique<MultiFab>(grids[lev], dmap[lev], m_ml_history_len, m_ml_history_ngrow);
+            m_phi_hist[lev]->setVal(0.0);
+            for (int d = 0; d < AMREX_SPACEDIM; ++d) {
+                BoxArray fba = grids[lev];
+                fba.surroundingNodes(d);
+                m_flux_hist[lev][d] = std::make_unique<MultiFab>(fba, dmap[lev], m_ml_history_len, m_ml_history_ngrow);
+                m_flux_hist[lev][d]->setVal(0.0);
+            }
+        }
     }
 
     // read in the MultiFab data
     for (int lev = 0; lev <= finest_level; ++lev) {
         VisMF::Read(phi_new[lev],
                     amrex::MultiFabFileFullPrefix(lev, restart_chkfile, "Level_", "phi"));
+        if (m_flux_mode == FluxMode::ml && m_ml_history_len > 0 && has_ml_header) {
+            VisMF::Read(*m_phi_hist[lev],
+                        amrex::MultiFabFileFullPrefix(lev, restart_chkfile, "Level_", "phi_hist"));
+            const char* flux_names[] = {"flux_hist_x", "flux_hist_y", "flux_hist_z"};
+            for (int d = 0; d < AMREX_SPACEDIM; ++d) {
+                VisMF::Read(*m_flux_hist[lev][d],
+                            amrex::MultiFabFileFullPrefix(lev, restart_chkfile, "Level_", flux_names[d]));
+            }
+        }
     }
 
 #ifdef AMREX_PARTICLES

@@ -11,6 +11,8 @@
 #include <AMReX_FluxRegister.H>
 #include <AMReX_FillPatcher.H>
 
+#include <FluxMode.H>
+
 #ifdef AMREX_USE_OMP
 #   include <omp.h>
 #endif
@@ -19,6 +21,13 @@
 #include <memory>
 #include <string>
 
+namespace torch {
+namespace jit {
+namespace script {
+class Module;
+}
+}
+}
 
 class AmrCoreAdv
     : public amrex::AmrCore
@@ -132,6 +141,10 @@ private:
     // read checkpoint file from disk
     void ReadCheckpointFile ();
 
+    void InitMLHistoryLevel (int lev, const amrex::BoxArray& ba,
+                             const amrex::DistributionMapping& dm);
+    void UpdateMLPhiHistory (int lev);
+
     ////////////////
     // private data members
 
@@ -187,6 +200,26 @@ private:
     amrex::Real m_ext_pot_alpha = 0.;
     amrex::Real m_ext_pot_beta  = 0.;
     amrex::Real m_ext_pot_gamma = 0.;
+
+    // ML flux configuration
+    FluxMode m_flux_mode = FluxMode::gaussian;
+    std::string m_ml_model_file;
+    int m_ml_history_len = 10;
+    int m_ml_history_ngrow = 1;
+    int m_ml_flow_steps = 100;
+    amrex::Real m_ml_flow_t0 = 0.0;
+    amrex::Real m_ml_flow_t1 = 1.0;
+    amrex::Real m_ml_t_df = 4.0;
+    amrex::Real m_ml_t_loc = 0.0;
+    amrex::Real m_ml_t_scale = 1.0;
+    amrex::Real m_ml_input_scale = 51.0;
+    amrex::Real m_ml_output_mn_fctr = 0.069;
+    amrex::Real m_ml_output_std_fctr = 0.2537;
+    bool m_ml_use_cuda = false;
+    std::unique_ptr<torch::jit::script::Module> m_ml_module;
+    amrex::Vector<std::unique_ptr<amrex::MultiFab>> m_phi_hist;
+    amrex::Vector<amrex::Array<std::unique_ptr<amrex::MultiFab>, AMREX_SPACEDIM>> m_flux_hist;
+    amrex::Vector<int> m_ml_hist_count;
 
     // maximum number of steps and stop time
     int max_step = std::numeric_limits<int>::max();

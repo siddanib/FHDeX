@@ -5,7 +5,37 @@
 #include <AMReX_MultiFab.H>
 #include <AMReX_BCRec.H>
 
+#include <FluxMode.H>
+
 using namespace amrex;
+
+namespace torch {
+namespace jit {
+namespace script {
+class Module;
+}
+}
+}
+
+struct MLFluxContext {
+    FluxMode mode = FluxMode::gaussian;
+    int history_len = 0;
+    int history_ngrow = 1;
+    int hist_count = 0;
+    int flow_steps = 20;
+    amrex::Real flow_t0 = 0.0;
+    amrex::Real flow_t1 = 1.0;
+    amrex::Real t_df = 4.0;
+    amrex::Real t_loc = 0.0;
+    amrex::Real t_scale = 1.0;
+    amrex::Real ml_input_scale = 51.0;
+    amrex::Real ml_output_mn_fctr = 0.069;
+    amrex::Real ml_output_std_fctr = 0.2537; 
+    const amrex::MultiFab* phi_hist = nullptr;
+    amrex::Array<amrex::MultiFab*, AMREX_SPACEDIM> flux_hist = {};
+    torch::jit::script::Module* module = nullptr;
+    bool use_cuda = (AMREX_USE_GPU) ? true :false;
+};
 
 void advance_phi (amrex::MultiFab& phi_old,
                   amrex::MultiFab& phi_new,
@@ -16,6 +46,7 @@ void advance_phi (amrex::MultiFab& phi_old,
                   Vector<amrex::BCRec> const& BoundaryCondition,
                   Vector<int> const& a_ensemble_dir,
                   int a_ext_pot, Real a_alpha, Real a_beta,
-                  Real a_gamma, Real a_d_spde);
+                  Real a_gamma, Real a_d_spde,
+                  MLFluxContext const* ml_ctx);
 
 #endif

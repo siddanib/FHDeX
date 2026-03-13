@@ -1,6 +1,7 @@
 #include <AmrCoreAdv.H>
 #include <Kernels.H>
 #include <myfunc.H>
+#include <algorithm>
 
 using namespace amrex;
 
@@ -25,9 +26,50 @@ AmrCoreAdv::AdvancePhiAtLevel (int lev, Real /*time*/, Real dt_lev, int /*iterat
     // We do this here so we can print the FABs for debugging
     phi_new[lev].setVal(0.0);
 
+    MLFluxContext ml_ctx;
+    amrex::Array<amrex::MultiFab*, AMREX_SPACEDIM> flux_hist_ptrs;
+    if (m_flux_mode == FluxMode::ml) {
+        ml_ctx.mode = FluxMode::ml;
+        ml_ctx.history_len = m_ml_history_len;
+        ml_ctx.history_ngrow = m_ml_history_ngrow;
+        ml_ctx.hist_count = m_ml_hist_count[lev];
+        ml_ctx.flow_steps = m_ml_flow_steps;
+        ml_ctx.flow_t0 = m_ml_flow_t0;
+        ml_ctx.flow_t1 = m_ml_flow_t1;
+        ml_ctx.t_df = m_ml_t_df;
+        ml_ctx.t_loc = m_ml_t_loc;
+        ml_ctx.t_scale = m_ml_t_scale;
+        ml_ctx.ml_input_scale = m_ml_input_scale;
+        ml_ctx.ml_output_mn_fctr = m_ml_output_mn_fctr;
+        ml_ctx.ml_output_std_fctr = m_ml_output_std_fctr;
+        if (!m_phi_hist[lev]) {
+            amrex::Abort("ML flux mode requires phi history buffers.");
+        }
+        ml_ctx.phi_hist = m_phi_hist[lev].get();
+        for (int d = 0; d < AMREX_SPACEDIM; ++d) {
+            if (!m_flux_hist[lev][d]) {
+                amrex::Abort("ML flux mode requires flux history buffers for all directions.");
+            }
+            flux_hist_ptrs[d] = m_flux_hist[lev][d].get();
+        }
+        ml_ctx.flux_hist = flux_hist_ptrs;
+        ml_ctx.module = m_ml_module.get();
+        ml_ctx.use_cuda = m_ml_use_cuda;
+
+        m_phi_hist[lev]->FillBoundary(Geom(lev).periodicity());
+        for (int d = 0; d < AMREX_SPACEDIM; ++d) {
+            // Ensure shared faces are consistent before feeding ML.
+            m_flux_hist[lev][d]->OverrideSync(Geom(lev).periodicity());
+        }
+    }
+
     advance_phi(phi_old[lev], phi_new[lev], fluxes, stochFluxes, dt_lev, npts_scale, geom[lev], bcs,
             m_ensemble_dir, m_ext_pot, m_ext_pot_alpha, m_ext_pot_beta, m_ext_pot_gamma,
-            m_d_spde);
+            m_d_spde, (m_flux_mode == FluxMode::ml) ? &ml_ctx : nullptr);
+
+    if (m_flux_mode == FluxMode::ml) {
+        UpdateMLPhiHistory(lev);
+    }
 
     // Increment or decrement the flux registers by area and time-weighted fluxes
     // Note that the fluxes have already been scaled by dt and area
