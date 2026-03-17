@@ -77,15 +77,17 @@ class building_block (torch.nn.Module):
         if self.residual_con:
             self.residual_layer = torch.nn.Linear(self.input_size, self.output_size,
                                                bias=True)
+        else:
+            self.residual_layer = torch.nn.Identity()
+
     def forward (self, x):
         x1 = torch.clone(x)
-        for lyr in self.module_list[:-1]:
-            x1 = lyr(x1)
-            x1 = self.act_func(x1)
-        lyr = self.module_list[-1]
-        x1 = lyr(x1)
-        if self.residual_con:
-            x1 += self.residual_layer(x)
+	last = len(self.module_list) - 1
+	for i, layer in enumerate(self.module_list):
+	    x1 = layer(x1)
+	    if i != last:
+	        x1 = self.act_func(x1)
+        x1 += self.residual_layer(x)
         return x1
 
 class SinusoidalTimeEmbedding(torch.nn.Module):
