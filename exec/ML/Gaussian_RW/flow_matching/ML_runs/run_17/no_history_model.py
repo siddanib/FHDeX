@@ -82,11 +82,11 @@ class building_block (torch.nn.Module):
 
     def forward (self, x):
         x1 = torch.clone(x)
-	last = len(self.module_list) - 1
-	for i, layer in enumerate(self.module_list):
-	    x1 = layer(x1)
-	    if i != last:
-	        x1 = self.act_func(x1)
+        last = len(self.module_list) - 1
+        for i, layer in enumerate(self.module_list):
+            x1 = layer(x1)
+            if i != last:
+                x1 = self.act_func(x1)
         x1 += self.residual_layer(x)
         return x1
 
