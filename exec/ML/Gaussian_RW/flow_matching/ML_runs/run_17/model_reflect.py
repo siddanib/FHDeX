@@ -159,20 +159,20 @@ class Flow_Transformer(Flow_Base):
             # Encoder for N
             memory_N = self.encoder_N(src_N_emb)
             ## Add type embedding
-            memory_N += self.type_embed(self.type_N.to(memory_N.device))
+            memory_N = memory_N + self.type_embed(self.type_N.to(memory_N.device))
             src_F_emb = self.input_F_proj(src_F) # (B, S-1, d_model)
             # Adding position embedding
             src_F_emb = self.pos_enc(src_F_emb)
             # Encoder for F
             memory_F = self.encoder_F(src_F_emb)
             ## Add type embedding
-            memory_F += self.type_embed(self.type_F.to(memory_F.device))
+            memory_F = memory_F + self.type_embed(self.type_F.to(memory_F.device))
             ## Concatenate along sequence dimension
             memory = torch.cat([memory_N, memory_F], dim=-2)
             # Decoder
             tgt_emb = self.target_proj(tgt)      # (B, L, d_model)
             # Adding time embedding
-            tgt_emb += self.time_enc(t)
+            tgt_emb = tgt_emb + self.time_enc(t)
             dec_out = self.decoder(tgt_emb, memory) # (B, L, d_model)
             out = self.out(dec_out)                 # (B, L, 1)
         return out
@@ -194,8 +194,14 @@ if __name__ == "__main__":
 
     mdl  = Flow_Transformer(input_N_dim=input_N_dim,
                             input_F_dim=input_F_dim)
+    chpt_fl = torch.load("./outputs/2026-03-03/18-02-59/"+
+                       "flow_transformer_model_2026-03-04_00-27-20.tar",
+                       weights_only=False)
+    mdl.load_state_dict(chpt_fl['model_state_dict'])
     # Dropout needs to be turned off for symmetry
     mdl.train(False)
+
+    scripted_mdl = torch.jit.script(mdl)
 
     #y = mdl(x_t, x_N, x_F, t)
     ##print(y)
@@ -209,10 +215,10 @@ if __name__ == "__main__":
     #             -x_F, t)
     #print(y_flip)
 
-    z = mdl.sample(x_t, x_N, x_F)
-    print(z)
-    z_flip = mdl.sample(-x_t, x_N.flip(dims=[-1,]),
-                 -x_F)
-    print(z_flip)
+    #z = mdl.sample(x_t, x_N, x_F)
+    #print(z)
+    #z_flip = mdl.sample(-x_t, x_N.flip(dims=[-1,]),
+    #             -x_F)
+    #print(z_flip)
 
 
