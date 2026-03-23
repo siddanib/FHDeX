@@ -190,8 +190,8 @@ void compute_flux_x (int i, int j, int k,
                      FluxMode flux_mode)
 {
     int coeff_index = 0; //Ncomp-1;
-    amrex::Real phibdry = 0.;
-    amrex::Real stofact = 1.;
+    amrex::Real phibdry = amrex::Real(0.);
+    amrex::Real stofact = amrex::Real(1.);
 
     int ext_pot = a_ext_pot;
     amrex::Real alpha = a_alpha;
@@ -312,8 +312,8 @@ void compute_flux_y (int i, int j, int k,
                      FluxMode flux_mode)
 {
     int coeff_index = 0; //Ncomp-1;
-    amrex::Real phibdry = 0.;
-    amrex::Real stofact = 1.;
+    amrex::Real phibdry = amrex::Real(0.);
+    amrex::Real stofact = amrex::Real(1.);
 
     int ext_pot = a_ext_pot;
     amrex::Real alpha = a_alpha;

@@ -12,7 +12,7 @@ StochasticPC::InitParticles (MultiFab& phi_fine, int a_ext_pot,
                              Real a_gamma, const int lev)
 {
     amrex::Print() << "calling InitParrticles" << std::endl;
-    amrex::Real factor = -1.;
+    amrex::Real factor = amrex::Real(-1.);
     AddParticles(phi_fine, BoxArray{},factor,
                  a_ext_pot, a_alpha, a_beta, a_gamma, lev);
 }
@@ -307,7 +307,7 @@ StochasticPC::RefluxFineToCrse (const BoxArray& ba_to_keep, MultiFab& phi_fine_f
                 // if (inew == 31) amrex::Print() <<" PARTICLE NOW AT 31 : OLD POS " << iold << std::endl;
 
                 if ( (assign_grid(old_pos) >= 0) && (assign_grid(new_pos) < 0)) {
-                   Gpu::Atomic::AddNoRet(&phi_arr(new_pos,0), 1.0);
+                   Gpu::Atomic::AddNoRet(&phi_arr(new_pos,0), amrex::Real(1.0));
                 }
             });
         } // if not in ba_to_keep
@@ -393,7 +393,7 @@ StochasticPC::RefluxCrseToFine (const BoxArray& ba_to_keep, MultiFab& phi_for_re
                 auto new_pos = getNewCell(p, plo_lev, dxi_lev, domain_lev);
 
                 if ( (assign_grid(old_pos) < 0) && (assign_grid(new_pos) >= 0)) {
-                   Gpu::Atomic::AddNoRet(&phi_arr(old_pos,0), -1.0);
+                   Gpu::Atomic::AddNoRet(&phi_arr(old_pos,0), amrex::Real(-1.0));
                 }
             });
         } // if not in ba_to_keep
@@ -441,9 +441,9 @@ StochasticPC::AdvectWithRandomWalk (int lev, Real dt, int a_ext_pot,
                           p.rdata(RealIdx::yold) = p.pos(1);,
                           p.rdata(RealIdx::zold) = p.pos(2););
 
-            AMREX_D_TERM( Real incx = amrex::RandomNormal(0.,stddev,engine);,
-                          Real incy = amrex::RandomNormal(0.,stddev,engine);,
-                          Real incz = amrex::RandomNormal(0.,stddev,engine););
+            AMREX_D_TERM( Real incx = amrex::RandomNormal(amrex::Real(0.),stddev,engine);,
+                          Real incy = amrex::RandomNormal(amrex::Real(0.),stddev,engine);,
+                          Real incz = amrex::RandomNormal(amrex::Real(0.),stddev,engine););
 
              if(ext_pot ==1){
                 amrex::Real xloc,yloc;
@@ -469,9 +469,9 @@ StochasticPC::AdvectWithRandomWalk (int lev, Real dt, int a_ext_pot,
             //               incz = 0.;);
 
             // Zero out the fluctuation if it is an ensemble direction
-            AMREX_D_TERM(incx *= (1.0 - ens_flag[0]);,
-                         incy *= (1.0 - ens_flag[1]);,
-                         incz *= (1.0 - ens_flag[2]););
+            AMREX_D_TERM(incx *= (amrex::Real(1.0) - ens_flag[0]);,
+                         incy *= (amrex::Real(1.0) - ens_flag[1]);,
+                         incz *= (amrex::Real(1.0) - ens_flag[2]););
 
             AMREX_D_TERM( p.pos(0) += static_cast<ParticleReal> (incx);,
                           p.pos(1) += static_cast<ParticleReal> (incy);,

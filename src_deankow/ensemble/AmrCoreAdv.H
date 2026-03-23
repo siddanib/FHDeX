@@ -192,12 +192,12 @@ private:
     // grid spacing along ensemble directions needs to be UNITY
     amrex::Vector<int> m_ensemble_dir = {AMREX_D_DECL(0, 0, 0)};
     // This variable is used to modify the diffusion coefficient of SPDE
-    amrex::Real m_d_spde = 0.5;
+    amrex::Real m_d_spde = amrex::Real(0.5);
     // Variables related to external potential (Only 2D for now)
     int m_ext_pot = 0;
-    amrex::Real m_ext_pot_alpha = 0.;
-    amrex::Real m_ext_pot_beta  = 0.;
-    amrex::Real m_ext_pot_gamma = 0.;
+    amrex::Real m_ext_pot_alpha = amrex::Real(0.);
+    amrex::Real m_ext_pot_beta  = amrex::Real(0.);
+    amrex::Real m_ext_pot_gamma = amrex::Real(0.);
 
     // ML flux configuration
     FluxMode m_flux_mode = FluxMode::gaussian;
@@ -205,14 +205,14 @@ private:
     int m_ml_history_len = 10;
     int m_ml_history_ngrow = 1;
     int m_ml_flow_steps = 100;
-    amrex::Real m_ml_flow_t0 = 0.0;
-    amrex::Real m_ml_flow_t1 = 1.0;
-    amrex::Real m_ml_t_df = 4.0;
-    amrex::Real m_ml_t_loc = 0.0;
-    amrex::Real m_ml_t_scale = 1.0;
-    amrex::Real m_ml_input_scale = 51.0;
-    amrex::Real m_ml_output_mn_fctr = 0.069;
-    amrex::Real m_ml_output_std_fctr = 0.2537;
+    amrex::Real m_ml_flow_t0 = amrex::Real(0.0);
+    amrex::Real m_ml_flow_t1 = amrex::Real(1.0);
+    amrex::Real m_ml_t_df = amrex::Real(4.0);
+    amrex::Real m_ml_t_loc = amrex::Real(0.0);
+    amrex::Real m_ml_t_scale = amrex::Real(1.0);
+    amrex::Real m_ml_input_scale = amrex::Real(51.0);
+    amrex::Real m_ml_output_mn_fctr = amrex::Real(0.069);
+    amrex::Real m_ml_output_std_fctr = amrex::Real(0.2537);
     bool m_ml_use_cuda = false;
     std::unique_ptr<torch::jit::Module> m_ml_module;
     amrex::Vector<std::unique_ptr<amrex::MultiFab>> m_phi_hist;
@@ -227,7 +227,7 @@ private:
     std::string restart_chkfile;
 
     // advective cfl number - dt = cfl*dx/umax
-    amrex::Real cfl = 0.7;
+    amrex::Real cfl = amrex::Real(0.7);
 
     // how often each level regrids the higher levels of refinement
     // (after a level advances that many time steps)

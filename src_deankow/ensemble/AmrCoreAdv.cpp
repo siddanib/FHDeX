@@ -99,9 +99,9 @@ AmrCoreAdv::AmrCoreAdv ()
         }
     }
 
-    t_new.resize(nlevs_max, 0.0);
-    t_old.resize(nlevs_max, -1.e100);
-    dt.resize(nlevs_max, 1.e100);
+    t_new.resize(nlevs_max, amrex::Real(0.0));
+    t_old.resize(nlevs_max, amrex::Real(-1.e100));
+    dt.resize(nlevs_max, amrex::Real(1.e100));
 
     phi_new.resize(nlevs_max);
     phi_old.resize(nlevs_max);
@@ -153,6 +153,7 @@ AmrCoreAdv::AmrCoreAdv ()
             m_ml_module = std::make_unique<torch::jit::Module>(
                 torch::jit::load(m_ml_model_file));
             m_ml_module->to(TorchRealDType());
+            m_ml_module->eval();
         }
         catch (const c10::Error&) {
             amrex::Abort("Error loading the TorchScript model.");
@@ -365,7 +366,7 @@ AmrCoreAdv::MakeNewLevelFromCoarse (int lev, Real time, const BoxArray& ba,
     phi_old[lev].define(ba, dm, ncomp, ng);
 
     t_new[lev] = time;
-    t_old[lev] = time - 1.e200;
+    t_old[lev] = time - amrex::Real(1.e200);
 
     if (lev > 0 && do_reflux) {
         flux_reg[lev] = std::make_unique<FluxRegister>(ba, dm, refRatio(lev-1), lev, ncomp);
@@ -412,7 +413,7 @@ AmrCoreAdv::RemakeLevel (int lev, Real time, const BoxArray& ba,
 
     if (m_flux_mode == FluxMode::ml && m_ml_history_len > 0) {
         auto new_hist = std::make_unique<MultiFab>(ba, dm, m_ml_history_len, m_ml_history_ngrow);
-        new_hist->setVal(0.0);
+        new_hist->setVal(amrex::Real(0.0));
         if (m_phi_hist[lev]) {
             new_hist->ParallelCopy(*m_phi_hist[lev], 0, 0, m_ml_history_len);
         }
@@ -422,7 +423,7 @@ AmrCoreAdv::RemakeLevel (int lev, Real time, const BoxArray& ba,
             BoxArray fba = ba;
             fba.surroundingNodes(d);
             auto new_flux_hist = std::make_unique<MultiFab>(fba, dm, m_ml_history_len, m_ml_history_ngrow);
-            new_flux_hist->setVal(0.0);
+            new_flux_hist->setVal(amrex::Real(0.0));
             if (m_flux_hist[lev][d]) {
                 new_flux_hist->ParallelCopy(*m_flux_hist[lev][d], 0, 0, m_ml_history_len);
             }
@@ -483,7 +484,7 @@ void AmrCoreAdv::MakeNewLevelFromScratch (int lev, Real time, const BoxArray& ba
     phi_old[lev].define(ba, dm, ncomp, ng);
 
     t_new[lev] = time;
-    t_old[lev] = time - 1.e200;
+    t_old[lev] = time - amrex::Real(1.e200);
 
     if (lev > 0 && do_reflux) {
         flux_reg[lev] = std::make_unique<FluxRegister>(ba, dm, refRatio(lev-1), lev, ncomp);
@@ -528,13 +529,13 @@ AmrCoreAdv::InitMLHistoryLevel (int lev, const BoxArray& ba, const DistributionM
     }
 
     m_phi_hist[lev] = std::make_unique<MultiFab>(ba, dm, m_ml_history_len, m_ml_history_ngrow);
-    m_phi_hist[lev]->setVal(0.0);
+    m_phi_hist[lev]->setVal(amrex::Real(0.0));
 
     for (int d = 0; d < AMREX_SPACEDIM; ++d) {
         BoxArray fba = ba;
         fba.surroundingNodes(d);
         m_flux_hist[lev][d] = std::make_unique<MultiFab>(fba, dm, m_ml_history_len, 0);
-        m_flux_hist[lev][d]->setVal(0.0);
+        m_flux_hist[lev][d]->setVal(amrex::Real(0.0));
     }
 
     m_ml_hist_count[lev] = 0;
@@ -653,7 +654,7 @@ AmrCoreAdv::ReadParameters ( amrex::Vector<int>& bc_lo, amrex::Vector<int>& bc_h
         pp.query("max_step", max_step);
         pp.query("stop_time", stop_time);
 
-        npts_scale = 1.0;
+        npts_scale = amrex::Real(1.0);
         pp.queryAdd("npts_scale", npts_scale);
 
         alg_type = 0;
@@ -679,9 +680,9 @@ AmrCoreAdv::ReadParameters ( amrex::Vector<int>& bc_lo, amrex::Vector<int>& bc_h
 
         m_ml_flow_steps = 100;
         pp.query("ml_flow_steps", m_ml_flow_steps);
-        m_ml_flow_t0 = 0.0;
+        m_ml_flow_t0 = amrex::Real(0.0);
         pp.query("ml_flow_t0", m_ml_flow_t0);
-        m_ml_flow_t1 = 1.0;
+        m_ml_flow_t1 = amrex::Real(1.0);
         pp.query("ml_flow_t1", m_ml_flow_t1);
         if (m_ml_flow_steps < 1) {
             amrex::Abort("ml_flow_steps must be >= 1.");
@@ -690,17 +691,17 @@ AmrCoreAdv::ReadParameters ( amrex::Vector<int>& bc_lo, amrex::Vector<int>& bc_h
             amrex::Abort("ml_flow_t1 must be greater than ml_flow_t0.");
         }
 
-        m_ml_t_df = 4.0;
+        m_ml_t_df = amrex::Real(4.0);
         pp.query("ml_t_df", m_ml_t_df);
-        m_ml_t_loc = 0.0;
+        m_ml_t_loc = amrex::Real(0.0);
         pp.query("ml_t_loc", m_ml_t_loc);
-        m_ml_t_scale = 1.0;
+        m_ml_t_scale = amrex::Real(1.0);
         pp.query("ml_t_scale", m_ml_t_scale);
-        m_ml_input_scale = 51.0;
+        m_ml_input_scale = amrex::Real(51.0);
         pp.query("ml_input_scale", m_ml_input_scale);
-        m_ml_output_mn_fctr = 0.069;
+        m_ml_output_mn_fctr = amrex::Real(0.069);
         pp.query("ml_output_mn_fctr", m_ml_output_mn_fctr);
-        m_ml_output_std_fctr = 0.2537;
+        m_ml_output_std_fctr = amrex::Real(0.2537);
         pp.query("ml_output_std_fctr", m_ml_output_std_fctr);
         if (m_ml_t_df <= 0.0) {
             amrex::Abort("ml_t_df must be > 0.");
@@ -977,7 +978,7 @@ AmrCoreAdv::timeStepNoSubcycling (Real time, int iteration)
     AdvancePhiAtLevel(lev, time, dt[lev], iteration, nsub);
 
     if (finest_level > 0) {
-        flux_reg[lev+1]->Reflux(phi_new[lev], 1.0, 0, 0, phi_new[lev].nComp(), geom[lev]);
+        flux_reg[lev+1]->Reflux(phi_new[lev], amrex::Real(1.0), 0, 0, phi_new[lev].nComp(), geom[lev]);
     }
 
     if (Verbose()) {
@@ -1489,12 +1490,12 @@ AmrCoreAdv::ReadCheckpointFile ()
 
         if (m_flux_mode == FluxMode::ml && m_ml_history_len > 0) {
             m_phi_hist[lev] = std::make_unique<MultiFab>(grids[lev], dmap[lev], m_ml_history_len, m_ml_history_ngrow);
-            m_phi_hist[lev]->setVal(0.0);
+            m_phi_hist[lev]->setVal(amrex::Real(0.0));
             for (int d = 0; d < AMREX_SPACEDIM; ++d) {
                 BoxArray fba = grids[lev];
                 fba.surroundingNodes(d);
                 m_flux_hist[lev][d] = std::make_unique<MultiFab>(fba, dmap[lev], m_ml_history_len, m_ml_history_ngrow);
-                m_flux_hist[lev][d]->setVal(0.0);
+                m_flux_hist[lev][d]->setVal(amrex::Real(0.0));
             }
         }
     }

@@ -117,7 +117,7 @@ struct ParticleData {
             // Define phi at level 1 from the particle count
             // **********************************************************************
             int lev = 1;
-            phi_fine.setVal(0.0);
+            phi_fine.setVal(amrex::Real(0.0));
             stochastic_particles->Increment(phi_fine, lev);
             phi_fine.mult(1./cell_vol_fine);
             amrex::Print() << "Used the particle locations to define phi at level 1 " << std::endl;
@@ -162,7 +162,7 @@ struct ParticleData {
             // Define comp_id = 1 of phi_crse based on particles
             // **********************************************************************
             amrex::MultiFab phi_from_ptcls(phi_crse, amrex::make_alias, comp_id, 1);
-            phi_from_ptcls.setVal(0.);
+            phi_from_ptcls.setVal(amrex::Real(0.));
             stochastic_particles->Increment(phi_from_ptcls, lev);
             phi_from_ptcls.FillBoundary(a_gdb->Geom(lev).periodicity());
             phi_from_ptcls.mult(1./cell_vol_crse);
@@ -184,7 +184,7 @@ struct ParticleData {
         stochastic_particles->AddParticles(phi_fine, old_fine_ba, factor,
                                            m_ext_pot, m_ext_pot_alpha,
                                            m_ext_pot_beta, m_ext_pot_gamma);
-        phi_fine.setVal(0.0);
+        phi_fine.setVal(amrex::Real(0.0));
         const int lev = 1;
         const auto dx = stochastic_particles->Geom(lev).CellSizeArray();
 
@@ -274,7 +274,7 @@ struct ParticleData {
             // Account for particles that went from crse --> fine BEFORE Redistribute
             // **********************************************************************
             amrex::MultiFab phi_grown2(phi_grown.boxArray(),phi_grown.DistributionMap(),1,1);
-            phi_grown2.setVal(0.);
+            phi_grown2.setVal(amrex::Real(0.));
 
             stochastic_particles->RefluxCrseToFine(phi_fine.boxArray(), phi_grown2);
 
@@ -305,7 +305,7 @@ struct ParticleData {
             // Account for particles that went from fine --> crse
             // **********************************************************************
 
-            phi_grown.setVal(0.);
+            phi_grown.setVal(amrex::Real(0.));
 
             stochastic_particles->RefluxFineToCrse(phi_fine.boxArray(), phi_grown);
 
@@ -326,7 +326,7 @@ struct ParticleData {
             // **********************************************************************
             // Define phi at level 1 from the particle count
             // **********************************************************************
-            phi_grown.setVal(0.);
+            phi_grown.setVal(amrex::Real(0.));
             stochastic_particles->Increment(phi_grown, lev);
 
             // *****************************************************************************
@@ -355,7 +355,7 @@ struct ParticleData {
                 amrex::MultiFab phi_crse_old(phi_crse_new.boxArray(),
                                              phi_crse_new.DistributionMap(),
                                              1, phi_crse_new.nGrow());
-                phi_crse_old.setVal(0.);
+                phi_crse_old.setVal(amrex::Real(0.));
                 stochastic_particles->Increment(phi_crse_old, lev);
                 phi_crse_old.FillBoundary(
                         stochastic_particles->GetParGDB()->Geom(lev).periodicity());
@@ -393,7 +393,7 @@ struct ParticleData {
             // Define comp_id = 1 of phi_crse_new based on particles
             // **********************************************************************
             amrex::MultiFab phi_from_ptcls(phi_crse_new, amrex::make_alias, comp_id, 1);
-            phi_from_ptcls.setVal(0.);
+            phi_from_ptcls.setVal(amrex::Real(0.));
             stochastic_particles->Increment(phi_from_ptcls, lev);
             phi_from_ptcls.FillBoundary(
                     stochastic_particles->GetParGDB()->Geom(lev).periodicity());
@@ -423,9 +423,9 @@ struct ParticleData {
     int m_remove_hist_freq = 1;
     // Variables related to external potential (Only 2D for now)
     int m_ext_pot = 0;
-    amrex::Real m_ext_pot_alpha = 0.;
-    amrex::Real m_ext_pot_beta  = 0.;
-    amrex::Real m_ext_pot_gamma = 0.;
-    amrex::Real m_factor = 0.9;
+    amrex::Real m_ext_pot_alpha = amrex::Real(0.);
+    amrex::Real m_ext_pot_beta  = amrex::Real(0.);
+    amrex::Real m_ext_pot_gamma = amrex::Real(0.);
+    amrex::Real m_factor = amrex::Real(0.9);
 };
 #endif
