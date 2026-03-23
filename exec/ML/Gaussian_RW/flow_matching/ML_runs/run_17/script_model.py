@@ -2,10 +2,10 @@ import torch
 from model_reflect import Flow_Transformer
 
 ### Set data type
-t_dtype = torch.float64
+t_dtype = torch.float32
 torch.set_default_dtype(t_dtype)
 
-t_device = "cpu"
+t_device = "cuda"
 torch.set_default_device(t_device)
 
 torch.autograd.set_grad_enabled(False)
@@ -23,7 +23,8 @@ model_folder = "./outputs/2026-03-03/18-02-59/"
 
 chpt_fl = torch.load(model_folder +
                    "flow_transformer_model_2026-03-04_00-27-20.tar",
-                   weights_only=False)
+                   map_location=torch.device(t_device),
+                   weights_only=True)
 flow.load_state_dict(chpt_fl['model_state_dict'])
 # Dropout needs to be turned off for symmetry
 flow.train(False)
@@ -48,8 +49,9 @@ print(y_1)
 y_2 = scripted_flow(x_t, x_N, x_F, t)
 print(y_2)
 print(y_2.device)
+print(y_2.dtype)
 
-assert torch.allclose(y_1,y_2)
+assert torch.allclose(y_1,y_2,atol=1.0e-6)
 
 if t_dtype == torch.float64:
     model_name = "_double_"
