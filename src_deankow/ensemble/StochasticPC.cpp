@@ -307,7 +307,7 @@ StochasticPC::RefluxFineToCrse (const BoxArray& ba_to_keep, MultiFab& phi_fine_f
                 // if (inew == 31) amrex::Print() <<" PARTICLE NOW AT 31 : OLD POS " << iold << std::endl;
 
                 if ( (assign_grid(old_pos) >= 0) && (assign_grid(new_pos) < 0)) {
-                   Gpu::Atomic::AddNoRet(&phi_arr(new_pos,0), 1.0);
+                   Gpu::Atomic::AddNoRet(&phi_arr(new_pos,0), Real(1.0));
                 }
             });
         } // if not in ba_to_keep
@@ -393,7 +393,7 @@ StochasticPC::RefluxCrseToFine (const BoxArray& ba_to_keep, MultiFab& phi_for_re
                 auto new_pos = getNewCell(p, plo_lev, dxi_lev, domain_lev);
 
                 if ( (assign_grid(old_pos) < 0) && (assign_grid(new_pos) >= 0)) {
-                   Gpu::Atomic::AddNoRet(&phi_arr(old_pos,0), -1.0);
+                   Gpu::Atomic::AddNoRet(&phi_arr(old_pos,0), Real(-1.0));
                 }
             });
         } // if not in ba_to_keep
@@ -469,9 +469,9 @@ StochasticPC::AdvectWithRandomWalk (int lev, Real dt, int a_ext_pot,
             //               incz = 0.;);
 
             // Zero out the fluctuation if it is an ensemble direction
-            AMREX_D_TERM(incx *= (1.0 - ens_flag[0]);,
-                         incy *= (1.0 - ens_flag[1]);,
-                         incz *= (1.0 - ens_flag[2]););
+            AMREX_D_TERM(incx *= (Real(1.0) - ens_flag[0]);,
+                         incy *= (Real(1.0) - ens_flag[1]);,
+                         incz *= (Real(1.0) - ens_flag[2]););
 
             AMREX_D_TERM( p.pos(0) += static_cast<ParticleReal> (incx);,
                           p.pos(1) += static_cast<ParticleReal> (incy);,

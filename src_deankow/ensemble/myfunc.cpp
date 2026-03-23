@@ -8,6 +8,7 @@
 #include <AMReX_Random.H>
 #include "common_functions.H"
 #include "rng_functions.H"
+#include <c10/core/InferenceMode.h>
 #include <torch/script.h>
 
 namespace {
@@ -141,7 +142,7 @@ void FillMLStochFluxDir (int dir,
 
             // For flux it is net particles crossing
             if (hist_count == 0) {
-                flux_ptr[index] = 0.0;
+                flux_ptr[index] = amrex::Real(0.0);
             } else {
                 int flux_base = index * flux_T;
                 for (int h = 0; h < hist_count; ++h) {
@@ -156,7 +157,9 @@ void FillMLStochFluxDir (int dir,
 
         amrex::Gpu::synchronize();
 
-        auto cpu_opts = torch::TensorOptions().dtype(torch::kFloat64);
+        c10::InferenceMode guard(true);
+
+        auto cpu_opts = torch::TensorOptions().dtype(torch::kFloat32);
         at::Tensor dens_t = torch::from_blob(dens_buf.dataPtr(), {ncell, dens_T, 2}, cpu_opts);
         at::Tensor flux_t = torch::from_blob(flux_buf.dataPtr(), {ncell, flux_T, 1}, cpu_opts);
         at::Tensor tgt_t  = torch::from_blob(x_buf.dataPtr(),   {ncell, 1, 1},    cpu_opts);
@@ -172,14 +175,16 @@ void FillMLStochFluxDir (int dir,
 #endif
         const int steps = (flow_steps > 0) ? flow_steps : 1;
         amrex::Real dt = (flow_t1 - flow_t0) / static_cast<amrex::Real>(steps);
+        auto time_opts = cpu_opts;
+#ifdef AMREX_USE_CUDA
+        if (use_cuda) {
+            time_opts = time_opts.device(torch::kCUDA);
+        }
+#endif
+        at::Tensor time_pst = torch::empty({ncell, 1, 1}, time_opts);
         for (int s = 0; s < steps; ++s) {
             amrex::Real tval = flow_t0 + dt * static_cast<amrex::Real>(s);
-            at::Tensor time_pst = torch::full({ncell, 1, 1}, tval, cpu_opts);
-#ifdef AMREX_USE_CUDA
-            if (use_cuda) {
-                time_pst = time_pst.to(torch::kCUDA);
-            }
-#endif
+            time_pst.fill_(tval);
             at::Tensor grad_t = module->forward({tgt_t, dens_t, flux_t, time_pst}).toTensor();
             if (grad_t.dim() == 1) {
                 grad_t = grad_t.view({ncell, 1, 1});

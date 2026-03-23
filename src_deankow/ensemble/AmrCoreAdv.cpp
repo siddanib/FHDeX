@@ -138,6 +138,7 @@ AmrCoreAdv::AmrCoreAdv ()
         try {
             m_ml_module = std::make_unique<torch::jit::Module>(
                 torch::jit::load(m_ml_model_file));
+            m_ml_module->eval();
         }
         catch (const c10::Error&) {
             amrex::Abort("Error loading the TorchScript model.");

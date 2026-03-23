@@ -83,13 +83,13 @@ AmrCoreAdv::AdvancePhiAtLevel (int lev, Real /*time*/, Real dt_lev, int /*iterat
         if (flux_reg[lev+1]) {
             for (int i = 0; i < AMREX_SPACEDIM; ++i) {
                 // update the lev+1/lev flux register (index lev+1)
-                flux_reg[lev+1]->CrseInit(fluxes[i],i,0,0,fluxes[i].nComp(),1.0);
+                flux_reg[lev+1]->CrseInit(fluxes[i],i,0,0,fluxes[i].nComp(),Real(1.0));
             }
         }
         if (flux_reg[lev]) {
             for (int i = 0; i < AMREX_SPACEDIM; ++i) {
                 // update the lev/lev-1 flux register (index lev)
-                flux_reg[lev]->FineAdd(fluxes[i],i,0,0,fluxes[i].nComp(),-1.0);
+                flux_reg[lev]->FineAdd(fluxes[i],i,0,0,fluxes[i].nComp(),Real(-1.0));
             }
         }
     }
