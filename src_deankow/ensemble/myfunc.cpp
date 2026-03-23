@@ -9,10 +9,20 @@
 #include "common_functions.H"
 #include "rng_functions.H"
 #include <torch/script.h>
+#include <type_traits>
 
 namespace {
 
 using namespace amrex;
+
+constexpr torch::Dtype TorchRealDType ()
+{
+    if constexpr (std::is_same_v<amrex::Real, float>) {
+        return torch::kFloat32;
+    } else {
+        return torch::kFloat64;
+    }
+}
 
 // This function updates the flux history as the scaling is very different
 // flux history is in NET PARTICLES CROSSING and NOT NUMBER DENSITY
@@ -156,30 +166,27 @@ void FillMLStochFluxDir (int dir,
 
         amrex::Gpu::synchronize();
 
-        auto cpu_opts = torch::TensorOptions().dtype(torch::kFloat64);
-        at::Tensor dens_t = torch::from_blob(dens_buf.dataPtr(), {ncell, dens_T, 2}, cpu_opts);
-        at::Tensor flux_t = torch::from_blob(flux_buf.dataPtr(), {ncell, flux_T, 1}, cpu_opts);
-        at::Tensor tgt_t  = torch::from_blob(x_buf.dataPtr(),   {ncell, 1, 1},    cpu_opts);
-
+        auto opts = torch::TensorOptions().dtype(TorchRealDType());
 #ifdef AMREX_USE_CUDA
         if (use_cuda) {
-            dens_t = dens_t.to(torch::kCUDA);
-            flux_t = flux_t.to(torch::kCUDA);
-            tgt_t  = tgt_t.to(torch::kCUDA);
+            opts = opts.device(torch::kCUDA);
+        } else {
+            opts = opts.device(torch::kCPU);
         }
 #else
         amrex::ignore_unused(use_cuda);
+        opts = opts.device(torch::kCPU);
 #endif
+        at::Tensor dens_t = torch::from_blob(dens_buf.dataPtr(), {ncell, dens_T, 2}, opts);
+        at::Tensor flux_t = torch::from_blob(flux_buf.dataPtr(), {ncell, flux_T, 1}, opts);
+        at::Tensor tgt_t  = torch::from_blob(x_buf.dataPtr(),   {ncell, 1, 1},    opts);
+
+        torch::InferenceMode guard;
         const int steps = (flow_steps > 0) ? flow_steps : 1;
         amrex::Real dt = (flow_t1 - flow_t0) / static_cast<amrex::Real>(steps);
         for (int s = 0; s < steps; ++s) {
             amrex::Real tval = flow_t0 + dt * static_cast<amrex::Real>(s);
-            at::Tensor time_pst = torch::full({ncell, 1, 1}, tval, cpu_opts);
-#ifdef AMREX_USE_CUDA
-            if (use_cuda) {
-                time_pst = time_pst.to(torch::kCUDA);
-            }
-#endif
+            at::Tensor time_pst = torch::full({ncell, 1, 1}, tval, opts);
             at::Tensor grad_t = module->forward({tgt_t, dens_t, flux_t, time_pst}).toTensor();
             if (grad_t.dim() == 1) {
                 grad_t = grad_t.view({ncell, 1, 1});
@@ -191,21 +198,15 @@ void FillMLStochFluxDir (int dir,
             }
             tgt_t += dt * grad_t;
         }
-
-#ifdef AMREX_USE_CUDA
-        if (use_cuda) {
-            tgt_t = tgt_t.to(torch::kCPU);
-        }
-#endif
         tgt_t = tgt_t.contiguous();
+        //amrex::Gpu::ManagedVector<amrex::Real> out_buf(ncell);
+        //auto acc = tgt_t.accessor<amrex::Real,3>();
+        //for (int n = 0; n < ncell; ++n) {
+        //    out_buf[n] = acc[n][0][0];
+        //}
 
-        amrex::Gpu::ManagedVector<amrex::Real> out_buf(ncell);
-        auto acc = tgt_t.accessor<amrex::Real,3>();
-        for (int n = 0; n < ncell; ++n) {
-            out_buf[n] = acc[n][0][0];
-        }
-
-        auto out_ptr = out_buf.dataPtr();
+        //auto out_ptr = out_buf.dataPtr();
+        auto out_ptr = tgt_t.data_ptr<amrex::Real>();
         amrex::ParallelFor(fbx, [=] AMREX_GPU_DEVICE (int i, int j, int k)
         {
             int ii = i - lo.x;

@@ -17,9 +17,23 @@
 #include <myfunc.H>
 #include "chrono"
 #include <algorithm>
+#include <type_traits>
 
 using namespace amrex;
 using namespace std::chrono;
+
+namespace {
+
+constexpr torch::Dtype TorchRealDType ()
+{
+    if constexpr (std::is_same_v<amrex::Real, float>) {
+        return torch::kFloat32;
+    } else {
+        return torch::kFloat64;
+    }
+}
+
+}
 
 // constructor - reads in parameters from inputs file
 //             - sizes multilevel arrays and data structures
@@ -138,6 +152,7 @@ AmrCoreAdv::AmrCoreAdv ()
         try {
             m_ml_module = std::make_unique<torch::jit::Module>(
                 torch::jit::load(m_ml_model_file));
+            m_ml_module->to(TorchRealDType());
         }
         catch (const c10::Error&) {
             amrex::Abort("Error loading the TorchScript model.");
