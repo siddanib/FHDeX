@@ -148,10 +148,17 @@ AmrCoreAdv::AmrCoreAdv ()
         if (m_ml_model_file.empty()) {
             amrex::Abort("flux_mode=ml requires ml_model_file to be set.");
         }
-
+#ifdef AMREX_USE_CUDA
+        const auto ml_device = torch::Device(torch::kCUDA, amrex::Gpu::Device::deviceId());
+#endif
         try {
+#ifdef AMREX_USE_CUDA
+            m_ml_module = std::make_unique<torch::jit::Module>(
+                torch::jit::load(m_ml_model_file, ml_device));
+#else
             m_ml_module = std::make_unique<torch::jit::Module>(
                 torch::jit::load(m_ml_model_file));
+#endif
             m_ml_module->to(TorchRealDType());
             m_ml_module->eval();
         }
@@ -161,7 +168,7 @@ AmrCoreAdv::AmrCoreAdv ()
 
 #ifdef AMREX_USE_CUDA
         m_ml_use_cuda = true;
-        m_ml_module->to(torch::kCUDA);
+        m_ml_module->to(ml_device);
 #else
         m_ml_use_cuda = false;
 #endif
@@ -567,7 +574,7 @@ AmrCoreAdv::UpdateMLPhiHistory (int lev)
     }
     else {
     	// History full: shift left by 1 to keep most recent hist_len entries.
-        // Create temporary duplicates 
+        // Create temporary duplicates
         amrex::MultiFab phi_hist_copy(phi_hist.boxArray(),
                                       phi_hist.DistributionMap(),
                                       phi_hist.nComp()-1, 0);

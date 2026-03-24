@@ -42,7 +42,7 @@ void UpdateMLFluxHistory (int hist_count, int history_len,
     }
     else {
     	// History full: shift left by 1 to keep most recent hist_len entries.
-        // Create temporary duplicates 
+        // Create temporary duplicates
         amrex::MultiFab flux_hist_copy(flux_hist.boxArray(),
                                        flux_hist.DistributionMap(),
                                        flux_hist.nComp()-1, 0);
@@ -139,7 +139,7 @@ void FillMLStochFluxDir (int dir,
                 int comp = h;
                 amrex::Real phiLh = phi_hist_arr(iL, jL, kL, comp);
             	phiLh *= (dvol/ml_input_scale);
-                amrex::Real phiRh = phi_hist_arr(iR, jR, kR, comp);    
+                amrex::Real phiRh = phi_hist_arr(iR, jR, kR, comp);
                 phiRh *= (dvol/ml_input_scale);
                 int off = dens_base + h * 2;
                 dens_ptr[off + 0] = std::max(phiLh, amrex::Real(0.));
@@ -169,7 +169,7 @@ void FillMLStochFluxDir (int dir,
         auto opts = torch::TensorOptions().dtype(TorchRealDType());
 #ifdef AMREX_USE_CUDA
         if (use_cuda) {
-            opts = opts.device(torch::kCUDA);
+            opts = opts.device(torch::Device(torch::kCUDA, amrex::Gpu::Device::deviceId()));
         } else {
             opts = opts.device(torch::kCPU);
         }
@@ -234,13 +234,13 @@ void FillMLStochFluxDir (int dir,
                 kR = k;
             }
             amrex::Real flux_val = out_ptr[index];
-            // The output is scaled net particles crossing 
+            // The output is scaled net particles crossing
             amrex::Real phiL = phi(iL, jL, kL, 0);
             phiL *= dvol;
             phiL = std::max(phiL, amrex::Real(0.));
             amrex::Real phiR = phi(iR, jR, kR, 0);
             phiR *= dvol;
-            phiR = std::max(phiR, amrex::Real(0.)); 
+            phiR = std::max(phiR, amrex::Real(0.));
             flux_val *= ml_output_std_fctr*std::sqrt(phiL+phiR);
             flux_val += ml_output_mn_fctr*(phiL-phiR);
             flux_val = std::min(flux_val, phiL);
@@ -249,7 +249,7 @@ void FillMLStochFluxDir (int dir,
         });
     }
     // The new fluxes are in terms of Net particles crossing
-    // Save them to flux_hist 
+    // Save them to flux_hist
     UpdateMLFluxHistory(hist_count, history_len,
                         geom, stochFlux_dir, flux_hist);
 }
