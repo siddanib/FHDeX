@@ -454,9 +454,12 @@ StochasticPC::AdvectWithRandomWalk (int lev, Real dt, int a_ext_pot,
                 Vsubx = 2.*(xloc - beta) * (xloc - alpha)* (2.*xloc - alpha - beta) / gamma;
                 Vsuby = 4.*(yloc - .5)*(yloc - .5)*(yloc - .5) / gamma;
 
-                p.pos(0) += -dt*Vsubx;
-                p.pos(1) += -dt*Vsuby;
-
+		if (ens_flag[0] == amrex::Real(0.)) {
+                    p.pos(0) += -dt*Vsubx;
+                }
+                if (ens_flag[1] == amrex::Real(0.)) {
+                    p.pos(1) += -dt*Vsuby;
+                }
              }
 
             AMREX_D_TERM( incx = std::max(-dx[0], std::min( dx[0], incx));,
