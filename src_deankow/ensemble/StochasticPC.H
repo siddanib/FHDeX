@@ -1,6 +1,7 @@
 #ifndef STOCHASTIC_PC_H_
 #define STOCHASTIC_PC_H_
 
+#include <AMReX_Math.H>
 #include <AMReX_Particles.H>
 
 struct RealIdx
@@ -94,17 +95,44 @@ AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE
 amrex::IntVect getNewCell (StochasticPC::ParticleType const& p,
                            amrex::GpuArray<amrex::Real,AMREX_SPACEDIM> const& plo,
                            amrex::GpuArray<amrex::Real,AMREX_SPACEDIM> const& dxi,
-                           const amrex::Box& domain) noexcept;
+                           const amrex::Box& domain) noexcept
+{
+    return getParticleCell(p, plo, dxi, domain);
+}
 
 AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE
 amrex::IntVect getOldCell (StochasticPC::ParticleType const& p,
                            amrex::GpuArray<amrex::Real,AMREX_SPACEDIM> const& plo,
                            amrex::GpuArray<amrex::Real,AMREX_SPACEDIM> const& dxi,
-                           const amrex::Box& domain) noexcept;
+                           const amrex::Box& domain) noexcept
+{
+    amrex::IntVect iv(
+        AMREX_D_DECL(int(amrex::Math::floor((p.rdata(RealIdx::xold)-plo[0])*dxi[0])),
+                     int(amrex::Math::floor((p.rdata(RealIdx::yold)-plo[1])*dxi[1])),
+                     int(amrex::Math::floor((p.rdata(RealIdx::zold)-plo[2])*dxi[2]))));
+    iv += domain.smallEnd();
+    return iv;
+}
 
 AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE
 amrex::IntVect periodicCorrectOldCell (const amrex::IntVect& old_pos,
                                        const amrex::IntVect& new_pos,
                                        const amrex::GpuArray<int,AMREX_SPACEDIM>& is_periodic,
-                                       const amrex::Box& domain) noexcept;
+                                       const amrex::Box& domain) noexcept
+{
+    amrex::IntVect shifted = old_pos;
+    for (int idim = 0; idim < AMREX_SPACEDIM; ++idim)
+    {
+        if (!is_periodic[idim]) { continue; }
+        if (amrex::Real(new_pos[idim] - old_pos[idim]) > 0.5*amrex::Real(domain.length(idim))) {
+            shifted[idim] += domain.length(idim);
+            continue;
+        }
+        if (amrex::Real(new_pos[idim] - old_pos[idim]) < -0.5*amrex::Real(domain.length(idim))) {
+            shifted[idim] -= domain.length(idim);
+            continue;
+        }
+    }
+    return shifted;
+}
 #endif

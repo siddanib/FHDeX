@@ -25,6 +25,7 @@
 #include <iomanip>
 #include <sstream>
 #include <type_traits>
+#include <utility>
 
 using namespace amrex;
 using namespace std::chrono;
@@ -38,6 +39,84 @@ constexpr torch::Dtype TorchRealDType ()
     } else {
         return torch::kFloat64;
     }
+}
+
+void CaptureSPDEFaceFluxProfileImpl (
+    int face_index,
+    amrex::Geometry const& geom,
+    amrex::MultiFab const& flux_x,
+    std::vector<amrex::Real>& spde_face_flux)
+{
+    const amrex::Box& domain = geom.Domain();
+    const int jlo = domain.smallEnd(1);
+    const int ny = domain.length(1);
+    auto overlap_mask = flux_x.OverlapMask(geom.periodicity());
+
+    amrex::Gpu::DeviceVector<amrex::Real> face_flux_d(ny, amrex::Real(0.0));
+    amrex::Real* face_flux_ptr = face_flux_d.dataPtr();
+
+    for (amrex::MFIter mfi(flux_x); mfi.isValid(); ++mfi) {
+        const amrex::Box& xbx = mfi.nodaltilebox(0);
+        if (face_index < xbx.smallEnd(0) || face_index > xbx.bigEnd(0)) {
+            continue;
+        }
+
+        amrex::Box line_box(amrex::IntVect(AMREX_D_DECL(face_index, xbx.smallEnd(1), 0)),
+                            amrex::IntVect(AMREX_D_DECL(face_index, xbx.bigEnd(1), 0)));
+        auto const& fluxx = flux_x.const_array(mfi);
+        auto const& mask = overlap_mask->const_array(mfi);
+        amrex::ParallelFor(line_box, [=] AMREX_GPU_DEVICE (int i, int j, int k) noexcept
+        {
+            amrex::ignore_unused(i, k);
+            const int cell_count = amrex::max(mask(face_index, j, 0), 1);
+            amrex::Gpu::Atomic::AddNoRet(
+                &face_flux_ptr[j - jlo],
+                fluxx(face_index, j, 0, 0) / static_cast<amrex::Real>(cell_count));
+        });
+    }
+
+    amrex::Gpu::streamSynchronize();
+    amrex::Gpu::copy(amrex::Gpu::deviceToHost,
+                     face_flux_d.begin(), face_flux_d.end(),
+                     spde_face_flux.begin());
+    amrex::ParallelDescriptor::ReduceRealSum(spde_face_flux.data(), ny);
+}
+
+std::pair<amrex::Real, amrex::Real> ComputeReducedDensitiesImpl (
+    amrex::MultiFab const& phi_mf,
+    amrex::Geometry const& gm,
+    amrex::Real x_min,
+    amrex::Real x_max)
+{
+    const auto prob_lo = gm.ProbLoArray();
+    const auto dx = gm.CellSizeArray();
+    amrex::Real spde_sum = amrex::Real(0.0);
+    amrex::Real particle_sum = amrex::Real(0.0);
+
+    for (amrex::MFIter mfi(phi_mf); mfi.isValid(); ++mfi) {
+        const amrex::Box& bx = mfi.validbox();
+        auto const& phi = phi_mf.const_array(mfi);
+
+        amrex::ReduceOps<amrex::ReduceOpSum, amrex::ReduceOpSum> reduce_op;
+        amrex::ReduceData<amrex::Real, amrex::Real> reduce_data(reduce_op);
+        using ReduceTuple = typename decltype(reduce_data)::Type;
+
+        reduce_op.eval(bx, reduce_data,
+        [=] AMREX_GPU_DEVICE (int i, int j, int k) -> ReduceTuple
+        {
+            amrex::Real x = prob_lo[0] + (static_cast<amrex::Real>(i) + amrex::Real(0.5)) * dx[0];
+            if (x >= x_min && x <= x_max) {
+                return {phi(i,j,k,0), phi(i,j,k,1)};
+            }
+            return {amrex::Real(0.0), amrex::Real(0.0)};
+        });
+
+        auto hv = reduce_data.value();
+        spde_sum += amrex::get<0>(hv);
+        particle_sum += amrex::get<1>(hv);
+    }
+
+    return {spde_sum, particle_sum};
 }
 
 }
@@ -985,40 +1064,7 @@ AmrCoreAdv::CaptureSPDEFaceFluxProfile (int lev,
         return;
     }
 
-    const amrex::Box& domain = Geom(lev).Domain();
-    const int jlo = domain.smallEnd(1);
-    const int ny = domain.length(1);
-    const int face_index = m_diag.face_index;
-    auto overlap_mask = fluxes[0].OverlapMask(Geom(lev).periodicity());
-
-    amrex::Gpu::DeviceVector<amrex::Real> face_flux_d(ny, amrex::Real(0.0));
-    amrex::Real* face_flux_ptr = face_flux_d.dataPtr();
-
-    for (MFIter mfi(fluxes[0]); mfi.isValid(); ++mfi) {
-        const Box& xbx = mfi.nodaltilebox(0);
-        if (face_index < xbx.smallEnd(0) || face_index > xbx.bigEnd(0)) {
-            continue;
-        }
-
-        Box line_box(IntVect(AMREX_D_DECL(face_index, xbx.smallEnd(1), 0)),
-                     IntVect(AMREX_D_DECL(face_index, xbx.bigEnd(1), 0)));
-        auto const& fluxx = fluxes[0].const_array(mfi);
-        auto const& mask = overlap_mask->const_array(mfi);
-        amrex::ParallelFor(line_box, [=] AMREX_GPU_DEVICE (int i, int j, int k) noexcept
-        {
-            amrex::ignore_unused(i, k);
-            amrex::Gpu::Atomic::AddNoRet(
-                &face_flux_ptr[j - jlo],
-                fluxx(face_index, j, 0, 0)
-                    / static_cast<amrex::Real>(amrex::max(mask(face_index, j, 0), 1)));
-        });
-    }
-
-    amrex::Gpu::streamSynchronize();
-    amrex::Gpu::copy(amrex::Gpu::deviceToHost,
-                     face_flux_d.begin(), face_flux_d.end(),
-                     m_diag.spde_face_flux.begin());
-    amrex::ParallelDescriptor::ReduceRealSum(m_diag.spde_face_flux.data(), ny);
+    CaptureSPDEFaceFluxProfileImpl(m_diag.face_index, Geom(lev), fluxes[0], m_diag.spde_face_flux);
 }
 
 void
@@ -1028,39 +1074,9 @@ AmrCoreAdv::ComputeReducedDensities (int lev)
         return;
     }
 
-    const amrex::Geometry& gm = Geom(lev);
-    const auto prob_lo = gm.ProbLoArray();
-    const auto dx = gm.CellSizeArray();
-    const amrex::Real x_min = m_diag.x_min;
-    const amrex::Real x_max = m_diag.x_max;
+    auto sums_local = ComputeReducedDensitiesImpl(phi_new[lev], Geom(lev), m_diag.x_min, m_diag.x_max);
 
-    amrex::Real spde_sum = amrex::Real(0.0);
-    amrex::Real particle_sum = amrex::Real(0.0);
-
-    for (MFIter mfi(phi_new[lev]); mfi.isValid(); ++mfi) {
-        const Box& bx = mfi.validbox();
-        auto const& phi = phi_new[lev].const_array(mfi);
-
-        ReduceOps<ReduceOpSum, ReduceOpSum> reduce_op;
-        ReduceData<Real, Real> reduce_data(reduce_op);
-        using ReduceTuple = typename decltype(reduce_data)::Type;
-
-        reduce_op.eval(bx, reduce_data,
-        [=] AMREX_GPU_DEVICE (int i, int j, int k) -> ReduceTuple
-        {
-            amrex::Real x = prob_lo[0] + (static_cast<amrex::Real>(i) + amrex::Real(0.5)) * dx[0];
-            if (x >= x_min && x <= x_max) {
-                return {phi(i,j,k,0), phi(i,j,k,1)};
-            }
-            return {amrex::Real(0.0), amrex::Real(0.0)};
-        });
-
-        auto hv = reduce_data.value();
-        spde_sum += amrex::get<0>(hv);
-        particle_sum += amrex::get<1>(hv);
-    }
-
-    amrex::Real sums[2] = {spde_sum, particle_sum};
+    amrex::Real sums[2] = {sums_local.first, sums_local.second};
     amrex::ParallelDescriptor::ReduceRealSum(sums, 2);
     m_diag.spde_reduced_density = sums[0];
     m_diag.particle_reduced_density = sums[1];
@@ -1068,7 +1084,9 @@ AmrCoreAdv::ComputeReducedDensities (int lev)
 #ifdef AMREX_PARTICLES
     auto const& particle_flux = particleData.GetFaceFluxDiagnosticsProfile();
     std::fill(m_diag.particle_face_flux.begin(), m_diag.particle_face_flux.end(), amrex::Real(0.0));
-    for (std::size_t n = 0; n < std::min(m_diag.particle_face_flux.size(), particle_flux.size()); ++n) {
+    const std::size_t ncopy = std::min(m_diag.particle_face_flux.size(),
+                                       static_cast<std::size_t>(particle_flux.size()));
+    for (std::size_t n = 0; n < ncopy; ++n) {
         m_diag.particle_face_flux[n] = particle_flux[n];
     }
 #endif

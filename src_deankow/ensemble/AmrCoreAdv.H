@@ -153,8 +153,10 @@ private:
     void InitDiagnostics ();
     void ValidateDiagnosticsMode () const;
     void ConfigureParticleDiagnostics ();
+public:
     void CaptureSPDEFaceFluxProfile (int lev, amrex::Array<amrex::MultiFab, AMREX_SPACEDIM> const& fluxes);
     void ComputeReducedDensities (int lev);
+private:
     void WriteStepDiagnostics (int lev, amrex::Real time);
     [[nodiscard]] int MapPhysicalXToFaceIndex (amrex::Geometry const& geom, amrex::Real x) const;
 

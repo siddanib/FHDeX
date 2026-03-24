@@ -314,50 +314,6 @@ StochasticPC::RefluxFineToCrse (const BoxArray& ba_to_keep, MultiFab& phi_fine_f
     } // pti
 }
 
-AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE
-IntVect getNewCell (StochasticPC::ParticleType const& p,
-                    GpuArray<Real,AMREX_SPACEDIM> const& plo,
-                    GpuArray<Real,AMREX_SPACEDIM> const& dxi,
-                    const Box& domain) noexcept
-{
-    return getParticleCell(p, plo, dxi, domain);;
-}
-
-AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE
-IntVect getOldCell (StochasticPC::ParticleType const& p,
-                    GpuArray<Real,AMREX_SPACEDIM> const& plo,
-                    GpuArray<Real,AMREX_SPACEDIM> const& dxi,
-                    const Box& domain) noexcept
-{
-    IntVect iv(
-               AMREX_D_DECL(int(Math::floor((p.rdata(RealIdx::xold)-plo[0])*dxi[0])),
-                            int(Math::floor((p.rdata(RealIdx::yold)-plo[1])*dxi[1])),
-                            int(Math::floor((p.rdata(RealIdx::zold)-plo[2])*dxi[2]))));
-    iv += domain.smallEnd();
-    return iv;
-}
-
-AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE
-IntVect periodicCorrectOldCell (const IntVect& old_pos, const IntVect& new_pos,
-                                const GpuArray<int,AMREX_SPACEDIM>& is_per,
-                                const Box& domain) noexcept
-{
-    IntVect shifted = old_pos;
-    for (int idim = 0; idim < AMREX_SPACEDIM; ++idim)
-    {
-        if (!is_per[idim]) { continue; }
-        if (Real(new_pos[idim] - old_pos[idim]) > 0.5*Real(domain.length(idim))) {
-            shifted[idim] += domain.length(idim);
-            continue;
-        }
-        if (Real(new_pos[idim] - old_pos[idim]) < -0.5*Real(domain.length(idim))) {
-            shifted[idim] -= domain.length(idim);
-            continue;
-        }
-    }
-    return shifted;
-}
-
 void
 StochasticPC::RefluxCrseToFine (const BoxArray& ba_to_keep, MultiFab& phi_for_reflux)
 {
