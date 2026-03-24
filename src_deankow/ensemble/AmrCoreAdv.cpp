@@ -68,10 +68,10 @@ void CaptureSPDEFaceFluxProfileImpl (
         amrex::ParallelFor(line_box, [=] AMREX_GPU_DEVICE (int i, int j, int k) noexcept
         {
             amrex::ignore_unused(i, k);
-            const int cell_count = amrex::max(mask(face_index, j, 0), 1);
+            const amrex::Real cell_count = amrex::max(mask(face_index, j, 0), amrex::Real(1.0));
             amrex::Gpu::Atomic::AddNoRet(
                 &face_flux_ptr[j - jlo],
-                fluxx(face_index, j, 0, 0) / static_cast<amrex::Real>(cell_count));
+                fluxx(face_index, j, 0, 0) / cell_count);
         });
     }
 
