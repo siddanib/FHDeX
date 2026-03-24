@@ -5,6 +5,9 @@
 #include <AMReX_PlotFileUtil.H>
 #include <AMReX_VisMF.H>
 #include <AMReX_PhysBCFunct.H>
+#include <AMReX_GpuAtomic.H>
+#include <AMReX_GpuContainers.H>
+#include <AMReX_Reduce.H>
 #include <torch/script.h>
 
 #ifdef AMREX_MEM_PROFILING
@@ -17,6 +20,10 @@
 #include <myfunc.H>
 #include "chrono"
 #include <algorithm>
+#include <cmath>
+#include <fstream>
+#include <iomanip>
+#include <sstream>
 #include <type_traits>
 
 using namespace amrex;
@@ -283,6 +290,7 @@ AmrCoreAdv::InitData ()
         // restart from a checkpoint
         ReadCheckpointFile();
     }
+    InitDiagnostics();
     if (plot_int > 0) {
         WritePlotFile();
     }
@@ -511,16 +519,60 @@ void AmrCoreAdv::MakeNewLevelFromScratch (int lev, Real time, const BoxArray& ba
     Real a_gamma  = m_ext_pot_gamma;
 
     if (lev == 0) {
+        if (m_init_type == InitType::piecewise_x) {
+            ValidateInitializationParameters();
+        }
+
+        amrex::Gpu::DeviceVector<amrex::Real> init_positions_d;
+        amrex::Gpu::DeviceVector<amrex::Real> init_particles_d;
+        amrex::Real const* init_positions_ptr = nullptr;
+        amrex::Real const* init_particles_ptr = nullptr;
+        int num_init_positions = 0;
+        if (m_init_type == InitType::piecewise_x) {
+            init_positions_d.resize(m_init_positions.size());
+            init_particles_d.resize(m_init_particles_per_interval.size());
+            amrex::Gpu::copy(amrex::Gpu::hostToDevice,
+                             m_init_positions.begin(), m_init_positions.end(),
+                             init_positions_d.begin());
+            amrex::Gpu::copy(amrex::Gpu::hostToDevice,
+                             m_init_particles_per_interval.begin(), m_init_particles_per_interval.end(),
+                             init_particles_d.begin());
+            init_positions_ptr = init_positions_d.data();
+            init_particles_ptr = init_particles_d.data();
+            num_init_positions = static_cast<int>(m_init_positions.size());
+        }
+
         for (MFIter mfi(phi_new[lev]); mfi.isValid(); ++mfi)
         {
             const Box& vbx = mfi.validbox();
             auto const& phi_arr = phi_new[lev].array(mfi);
             auto npts_scale_local = npts_scale;
+            auto init_type = m_init_type;
             amrex::ParallelFor(vbx,
             [=] AMREX_GPU_DEVICE(int i, int j, int k)
             {
-                init_phi(i,j,k,phi_arr,dx,problo,npts_scale_local,Ncomp,
-                         a_ext_pot, a_alpha, a_beta, a_gamma);
+                if (init_type == InitType::piecewise_x) {
+                    amrex::Real cellvol = dx[0]*dx[1];
+#if (AMREX_SPACEDIM > 2)
+                    cellvol *= dx[2];
+#endif
+                    amrex::Real x = problo[0] + (static_cast<amrex::Real>(i) + amrex::Real(0.5)) * dx[0];
+                    int interval = num_init_positions;
+                    for (int n = 0; n < num_init_positions; ++n) {
+                        if (x < init_positions_ptr[n]) {
+                            interval = n;
+                            break;
+                        }
+                    }
+
+                    phi_arr(i,j,k,0) = init_particles_ptr[interval] / cellvol;
+                    if (Ncomp == 2) {
+                        phi_arr(i,j,k,1) = phi_arr(i,j,k,0);
+                    }
+                } else {
+                    init_phi(i,j,k,phi_arr,dx,problo,npts_scale_local,Ncomp,
+                             a_ext_pot, a_alpha, a_beta, a_gamma);
+                }
             });
         }
     } else {
@@ -667,6 +719,11 @@ AmrCoreAdv::ReadParameters ( amrex::Vector<int>& bc_lo, amrex::Vector<int>& bc_h
         alg_type = 0;
         pp.queryAdd("alg_type", alg_type);
 
+        m_init_type = InitType::uniform;
+        pp.query("init_type", m_init_type);
+        pp.queryarr("init_positions", m_init_positions);
+        pp.queryarr("init_particles_per_interval", m_init_particles_per_interval);
+
         m_flux_mode = FluxMode::gaussian;
         pp.query("flux_mode", m_flux_mode);
 
@@ -722,6 +779,12 @@ AmrCoreAdv::ReadParameters ( amrex::Vector<int>& bc_lo, amrex::Vector<int>& bc_h
         if (m_ml_output_std_fctr <= 0.0) {
             amrex::Abort("ml_output_std_fctr must be > 0.");
         }
+
+        pp.query("diag_enable", m_diag.enabled);
+        pp.query("diag_flux_x", m_diag.flux_x);
+        pp.query("diag_x_min", m_diag.x_min);
+        pp.query("diag_x_max", m_diag.x_max);
+        pp.query("diag_file", m_diag.file);
 
         // read in BC; see Src/Base/AMReX_BC_TYPES.H for supported types
         pp.queryarr("bc_lo", bc_lo);
@@ -788,6 +851,282 @@ AmrCoreAdv::ReadParameters ( amrex::Vector<int>& bc_lo, amrex::Vector<int>& bc_h
         }
         particleData.init_particle_params(max_level, a_ensemble_dir_exists);
 #endif
+}
+
+void
+AmrCoreAdv::ValidateInitializationParameters () const
+{
+    if (m_init_type == InitType::uniform) {
+        return;
+    }
+
+    if (m_init_particles_per_interval.size() != m_init_positions.size() + 1) {
+        amrex::Abort("piecewise_x initialization requires init_particles_per_interval to have exactly one more entry than init_positions.");
+    }
+
+    const amrex::Real prob_lo = Geom(0).ProbLo(0);
+    const amrex::Real prob_hi = Geom(0).ProbHi(0);
+    amrex::Real prev = prob_lo;
+    for (amrex::Real xpos : m_init_positions) {
+        if (xpos < prob_lo || xpos > prob_hi) {
+            amrex::Abort("All init_positions entries must lie inside the level-0 x-domain.");
+        }
+        if (xpos <= prev) {
+            amrex::Abort("init_positions must be strictly increasing.");
+        }
+        prev = xpos;
+    }
+}
+
+void
+AmrCoreAdv::ValidateDiagnosticsMode () const
+{
+    if (!m_diag.enabled) {
+        return;
+    }
+
+    if (alg_type == 0) {
+        amrex::Abort("Diagnostics require alg_type != 0.");
+    }
+
+    if (max_level != 0) {
+        amrex::Abort("Diagnostics require amr.max_level = 0.");
+    }
+
+#ifdef AMREX_PARTICLES
+    if (!particleData.UsingParticles()) {
+        amrex::Abort("Diagnostics require amr.use_particles = 1.");
+    }
+#else
+    amrex::Abort("Diagnostics require particle support.");
+#endif
+}
+
+int
+AmrCoreAdv::MapPhysicalXToFaceIndex (amrex::Geometry const& geom, amrex::Real x) const
+{
+    const amrex::Real prob_lo = geom.ProbLo(0);
+    const amrex::Real prob_hi = geom.ProbHi(0);
+    const amrex::Real dx = geom.CellSize(0);
+    const amrex::Box& domain = geom.Domain();
+
+    if (x < prob_lo - 1.e-12 || x > prob_hi + 1.e-12) {
+        amrex::Abort("diag_flux_x is outside the level-0 x-domain.");
+    }
+
+    const amrex::Real rel = (x - prob_lo) / dx;
+    const int face = static_cast<int>(std::llround(rel)) + domain.smallEnd(0);
+    const int face_lo = domain.smallEnd(0);
+    const int face_hi = domain.bigEnd(0) + 1;
+    if (face < face_lo || face > face_hi) {
+        amrex::Abort("diag_flux_x does not map to a valid level-0 x-face.");
+    }
+
+    return face;
+}
+
+void
+AmrCoreAdv::ConfigureParticleDiagnostics ()
+{
+    if (!m_diag.enabled) {
+        return;
+    }
+
+#ifdef AMREX_PARTICLES
+    ParticleData::FaceFluxDiagnosticsConfig config;
+    config.enabled = true;
+    config.face_index = m_diag.face_index;
+    config.face_x = Geom(0).ProbLo(0)
+        + static_cast<amrex::Real>(m_diag.face_index - Geom(0).Domain().smallEnd(0)) * Geom(0).CellSize(0);
+    config.valid_box_array = boxArray(0);
+    particleData.ConfigureFaceFluxDiagnostics(config);
+#endif
+}
+
+void
+AmrCoreAdv::InitDiagnostics ()
+{
+    if (!m_diag.enabled) {
+        return;
+    }
+
+    ValidateDiagnosticsMode();
+    if (m_diag.x_min > m_diag.x_max) {
+        amrex::Abort("diag_x_min must be <= diag_x_max.");
+    }
+    if (m_diag.x_min < Geom(0).ProbLo(0) || m_diag.x_max > Geom(0).ProbHi(0)) {
+        amrex::Abort("diag_x_min/diag_x_max must lie inside the level-0 x-domain.");
+    }
+    m_diag.face_index = MapPhysicalXToFaceIndex(Geom(0), m_diag.flux_x);
+    const int ny = Geom(0).Domain().length(1);
+    m_diag.spde_face_flux.assign(ny, amrex::Real(0.0));
+    m_diag.particle_face_flux.assign(ny, amrex::Real(0.0));
+    m_diag.spde_reduced_density = amrex::Real(0.0);
+    m_diag.particle_reduced_density = amrex::Real(0.0);
+    m_diag.header_written = false;
+    if (restart_chkfile.empty() && amrex::ParallelDescriptor::IOProcessor()) {
+        std::ofstream os(m_diag.file, std::ios::out | std::ios::trunc);
+        if (!os.good()) {
+            amrex::Abort("Unable to initialize diagnostics file.");
+        }
+    }
+    ConfigureParticleDiagnostics();
+}
+
+void
+AmrCoreAdv::CaptureSPDEFaceFluxProfile (int lev,
+                                        amrex::Array<amrex::MultiFab, AMREX_SPACEDIM> const& fluxes)
+{
+    if (!m_diag.enabled) {
+        return;
+    }
+
+    if (lev != 0) {
+        return;
+    }
+
+    const amrex::Box& domain = Geom(lev).Domain();
+    const int jlo = domain.smallEnd(1);
+    const int ny = domain.length(1);
+    const int face_index = m_diag.face_index;
+    auto overlap_mask = fluxes[0].OverlapMask(Geom(lev).periodicity());
+
+    amrex::Gpu::DeviceVector<amrex::Real> face_flux_d(ny, amrex::Real(0.0));
+    amrex::Real* face_flux_ptr = face_flux_d.dataPtr();
+
+    for (MFIter mfi(fluxes[0]); mfi.isValid(); ++mfi) {
+        const Box& xbx = mfi.nodaltilebox(0);
+        if (face_index < xbx.smallEnd(0) || face_index > xbx.bigEnd(0)) {
+            continue;
+        }
+
+        Box line_box(IntVect(AMREX_D_DECL(face_index, xbx.smallEnd(1), 0)),
+                     IntVect(AMREX_D_DECL(face_index, xbx.bigEnd(1), 0)));
+        auto const& fluxx = fluxes[0].const_array(mfi);
+        auto const& mask = overlap_mask->const_array(mfi);
+        amrex::ParallelFor(line_box, [=] AMREX_GPU_DEVICE (int i, int j, int k) noexcept
+        {
+            amrex::ignore_unused(i, k);
+            amrex::Gpu::Atomic::AddNoRet(
+                &face_flux_ptr[j - jlo],
+                fluxx(face_index, j, 0, 0)
+                    / static_cast<amrex::Real>(amrex::max(mask(face_index, j, 0), 1)));
+        });
+    }
+
+    amrex::Gpu::streamSynchronize();
+    amrex::Gpu::copy(amrex::Gpu::deviceToHost,
+                     face_flux_d.begin(), face_flux_d.end(),
+                     m_diag.spde_face_flux.begin());
+    amrex::ParallelDescriptor::ReduceRealSum(m_diag.spde_face_flux.data(), ny);
+}
+
+void
+AmrCoreAdv::ComputeReducedDensities (int lev)
+{
+    if (!m_diag.enabled) {
+        return;
+    }
+
+    const amrex::Geometry& gm = Geom(lev);
+    const auto prob_lo = gm.ProbLoArray();
+    const auto dx = gm.CellSizeArray();
+    const amrex::Real x_min = m_diag.x_min;
+    const amrex::Real x_max = m_diag.x_max;
+
+    amrex::Real spde_sum = amrex::Real(0.0);
+    amrex::Real particle_sum = amrex::Real(0.0);
+
+    for (MFIter mfi(phi_new[lev]); mfi.isValid(); ++mfi) {
+        const Box& bx = mfi.validbox();
+        auto const& phi = phi_new[lev].const_array(mfi);
+
+        ReduceOps<ReduceOpSum, ReduceOpSum> reduce_op;
+        ReduceData<Real, Real> reduce_data(reduce_op);
+        using ReduceTuple = typename decltype(reduce_data)::Type;
+
+        reduce_op.eval(bx, reduce_data,
+        [=] AMREX_GPU_DEVICE (int i, int j, int k) -> ReduceTuple
+        {
+            amrex::Real x = prob_lo[0] + (static_cast<amrex::Real>(i) + amrex::Real(0.5)) * dx[0];
+            if (x >= x_min && x <= x_max) {
+                return {phi(i,j,k,0), phi(i,j,k,1)};
+            }
+            return {amrex::Real(0.0), amrex::Real(0.0)};
+        });
+
+        auto hv = reduce_data.value();
+        spde_sum += amrex::get<0>(hv);
+        particle_sum += amrex::get<1>(hv);
+    }
+
+    amrex::Real sums[2] = {spde_sum, particle_sum};
+    amrex::ParallelDescriptor::ReduceRealSum(sums, 2);
+    m_diag.spde_reduced_density = sums[0];
+    m_diag.particle_reduced_density = sums[1];
+
+#ifdef AMREX_PARTICLES
+    auto const& particle_flux = particleData.GetFaceFluxDiagnosticsProfile();
+    std::fill(m_diag.particle_face_flux.begin(), m_diag.particle_face_flux.end(), amrex::Real(0.0));
+    for (std::size_t n = 0; n < std::min(m_diag.particle_face_flux.size(), particle_flux.size()); ++n) {
+        m_diag.particle_face_flux[n] = particle_flux[n];
+    }
+#endif
+}
+
+void
+AmrCoreAdv::WriteStepDiagnostics (int lev, amrex::Real time)
+{
+    if (!m_diag.enabled) {
+        return;
+    }
+
+    if (lev != 0 || !amrex::ParallelDescriptor::IOProcessor()) {
+        return;
+    }
+
+    std::ios_base::openmode mode = std::ios::out | std::ios::app;
+    bool write_header = false;
+    {
+        std::ifstream is(m_diag.file, std::ios::in | std::ios::ate);
+        if (!is.good()) {
+            write_header = true;
+        } else if (is.tellg() == std::streampos(0)) {
+            write_header = true;
+        }
+    }
+    std::ofstream os(m_diag.file, mode);
+    if (!os.good()) {
+        amrex::Abort("Unable to open diagnostics file.");
+    }
+
+    if (write_header) {
+        os << "# step time y_index y_coord spde_flux_x particle_crossing_flux "
+              "spde_reduced_density particle_reduced_density\n";
+    }
+    m_diag.header_written = true;
+
+    const amrex::Geometry& gm = Geom(lev);
+    const amrex::Real ylo = gm.ProbLo(1);
+    const amrex::Real dy = gm.CellSize(1);
+    const amrex::Box& domain = gm.Domain();
+    const int jlo = domain.smallEnd(1);
+    const int ny = domain.length(1);
+    const int rows = static_cast<int>(std::min(m_diag.spde_face_flux.size(), m_diag.particle_face_flux.size()));
+
+    os << std::setprecision(17);
+    for (int n = 0; n < amrex::min(ny, rows); ++n) {
+        const int j = jlo + n;
+        const amrex::Real y = ylo + (static_cast<amrex::Real>(j - jlo) + amrex::Real(0.5)) * dy;
+        os << istep[lev] + 1 << " "
+           << time << " "
+           << j << " "
+           << y << " "
+           << m_diag.spde_face_flux[n] << " "
+           << m_diag.particle_face_flux[n] << " "
+           << m_diag.spde_reduced_density << " "
+           << m_diag.particle_reduced_density << "\n";
+    }
 }
 
 // set covered coarse cells to be the average of overlying fine cells
@@ -1017,6 +1356,9 @@ AmrCoreAdv::timeStepNoSubcycling (Real time, int iteration)
     }
     particleData.Redistribute();
 #endif
+
+    ComputeReducedDensities(lev);
+    WriteStepDiagnostics(lev, time + dt[lev]);
 
     // Make sure the coarser levels are consistent with the finer levels
     AverageDown ();

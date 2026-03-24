@@ -67,6 +67,8 @@ AmrCoreAdv::AdvancePhiAtLevel (int lev, Real /*time*/, Real dt_lev, int /*iterat
             m_ensemble_dir, m_ext_pot, m_ext_pot_alpha, m_ext_pot_beta, m_ext_pot_gamma,
             m_d_spde, (m_flux_mode == FluxMode::ml) ? &ml_ctx : nullptr);
 
+    CaptureSPDEFaceFluxProfile(lev, fluxes);
+
     if (m_flux_mode == FluxMode::ml) {
         UpdateMLPhiHistory(lev);
     }

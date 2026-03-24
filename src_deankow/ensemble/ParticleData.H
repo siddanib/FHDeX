@@ -9,6 +9,10 @@
 #include <AMReX_ParmParse.H>
 #include <AMReX_Print.H>
 #include <AMReX_Gpu.H>
+#include <AMReX_GpuAtomic.H>
+#include <AMReX_GpuContainers.H>
+#include <AMReX_Math.H>
+#include <AMReX_ParallelDescriptor.H>
 
 #include <StochasticPC.H>
 
@@ -18,6 +22,13 @@
 
 struct ParticleData {
   public:
+    struct FaceFluxDiagnosticsConfig {
+        bool enabled = false;
+        int face_index = -1;
+        amrex::Real face_x = amrex::Real(0.0);
+        amrex::BoxArray valid_box_array;
+    };
+
     void init_particle_params(int max_level, int ensemble_dir_exists)
     {
         amrex::ParmParse pp(pp_prefix);
@@ -231,6 +242,142 @@ struct ParticleData {
         }
     }
 
+    void ConfigureFaceFluxDiagnostics(FaceFluxDiagnosticsConfig const& config)
+    {
+        m_face_flux_diag = config;
+    }
+
+    void BeginFaceFluxDiagnostics(int lev, amrex::Real dt_lev)
+    {
+        amrex::ignore_unused(lev, dt_lev);
+        if (!m_face_flux_diag.enabled || !stochastic_particles) {
+            return;
+        }
+
+        const int ny = stochastic_particles->Geom(lev).Domain().length(1);
+        m_particle_face_flux_profile.assign(ny, amrex::Real(0.0));
+    }
+
+    void EndFaceFluxDiagnostics(int lev, amrex::Real dt_lev)
+    {
+        if (!m_face_flux_diag.enabled) {
+            return;
+        }
+
+        if (!stochastic_particles) {
+            return;
+        }
+
+        const amrex::Geometry& geom = stochastic_particles->Geom(lev);
+        const auto problo = geom.ProbLoArray();
+        const auto probhi = geom.ProbHiArray();
+        const auto dx = geom.CellSizeArray();
+        const amrex::Box& domain = geom.Domain();
+        const int ny = domain.length(1);
+        const amrex::Real face_x = m_face_flux_diag.face_x;
+        const amrex::Real lx = probhi[0] - problo[0];
+        const bool periodic_x = geom.isPeriodic(0);
+        const bool periodic_y = geom.isPeriodic(1);
+        const amrex::Real face_area = AMREX_D_TERM(amrex::Real(1.0), * dx[1], * dx[2]);
+        const auto dxi = geom.InvCellSizeArray();
+        const auto is_periodic = geom.isPeriodicArray();
+
+        if (!m_face_flux_valid_particle_locator.isValid(m_face_flux_diag.valid_box_array)) {
+            m_face_flux_valid_particle_locator.build(m_face_flux_diag.valid_box_array, geom);
+        }
+        m_face_flux_valid_particle_locator.setGeometry(geom);
+        auto valid_assign_grid = m_face_flux_valid_particle_locator.getGridAssignor();
+
+        amrex::Gpu::DeviceVector<amrex::Real> flux_bins_d(ny, amrex::Real(0.0));
+        amrex::Real* flux_bins_ptr = flux_bins_d.dataPtr();
+
+        for (typename StochasticPC::ParIterType pti(*stochastic_particles, lev); pti.isValid(); ++pti) {
+            auto& ptile = stochastic_particles->ParticlesAt(lev, pti);
+            auto& aos = ptile.GetArrayOfStructs();
+            const int np = aos.numParticles();
+            auto* pstruct = aos().data();
+
+            amrex::ParallelFor(np, [=] AMREX_GPU_DEVICE (int i) noexcept
+            {
+                auto const& p = pstruct[i];
+                amrex::Real xold = p.rdata(RealIdx::xold);
+                amrex::Real yold = p.rdata(RealIdx::yold);
+                amrex::Real xnew = p.pos(0);
+                auto old_pos = getOldCell(p, problo, dxi, domain);
+                auto new_pos = getNewCell(p, problo, dxi, domain);
+                old_pos = periodicCorrectOldCell(old_pos, new_pos, is_periodic, domain);
+
+                if (valid_assign_grid(old_pos) < 0) {
+                    return;
+                }
+
+                amrex::Real disp = xnew - xold;
+                if (periodic_x) {
+                    if (disp > amrex::Real(0.5) * lx) {
+                        disp -= lx;
+                    } else if (disp < -amrex::Real(0.5) * lx) {
+                        disp += lx;
+                    }
+                }
+
+                amrex::Real xnew_unwrapped = xold + disp;
+                amrex::Real sign = amrex::Real(0.0);
+                auto crosses_face = [=] AMREX_GPU_DEVICE (amrex::Real face_loc) noexcept
+                {
+                    if (disp > amrex::Real(0.0)) {
+                        return (xold < face_loc && xnew_unwrapped >= face_loc) ? amrex::Real(-1.0)
+                                                                               : amrex::Real(0.0);
+                    } else if (disp < amrex::Real(0.0)) {
+                        return (xold >= face_loc && xnew_unwrapped < face_loc) ? amrex::Real(1.0)
+                                                                                : amrex::Real(0.0);
+                    }
+                    return amrex::Real(0.0);
+                };
+
+                sign = crosses_face(face_x);
+                if (periodic_x && sign == amrex::Real(0.0)) {
+                    sign = crosses_face(face_x + lx);
+                }
+                if (periodic_x && sign == amrex::Real(0.0)) {
+                    sign = crosses_face(face_x - lx);
+                }
+
+                if (sign == amrex::Real(0.0)) {
+                    return;
+                }
+
+                if (periodic_y) {
+                    amrex::Real ly = probhi[1] - problo[1];
+                    if (yold < problo[1]) {
+                        yold += ly;
+                    } else if (yold >= probhi[1]) {
+                        yold -= ly;
+                    }
+                }
+
+                int j = static_cast<int>(amrex::Math::floor((yold - problo[1]) / dx[1]));
+                j = amrex::max(0, amrex::min(ny - 1, j));
+                amrex::Gpu::Atomic::AddNoRet(&flux_bins_ptr[j], sign / (dt_lev * face_area));
+            });
+        }
+
+        amrex::Gpu::streamSynchronize();
+        amrex::Gpu::copy(amrex::Gpu::deviceToHost,
+                         flux_bins_d.begin(), flux_bins_d.end(),
+                         m_particle_face_flux_profile.begin());
+        amrex::ParallelDescriptor::ReduceRealSum(m_particle_face_flux_profile.data(), ny);
+    }
+
+    [[nodiscard]] bool UsingParticles() const
+    {
+        return use_particles != 0;
+    }
+
+    [[nodiscard]] amrex::Vector<amrex::Real> const& GetFaceFluxDiagnosticsProfile() const
+    {
+        return m_particle_face_flux_profile;
+    }
+
     void advance_particles(int lev, amrex::Real dt_lev, amrex::Real cell_vol,
                            amrex::MultiFab& phi_crse_old,
                            amrex::MultiFab& phi_crse_new,
@@ -266,9 +413,11 @@ struct ParticleData {
             // **********************************************************************
             // Advect the particles in the valid region and in the ghost region
             // **********************************************************************
+            BeginFaceFluxDiagnostics(lev, dt_lev);
             stochastic_particles->AdvectWithRandomWalk(lev, dt_lev, m_ext_pot,
                                         m_ext_pot_alpha, m_ext_pot_beta,
                                         m_ext_pot_gamma, m_ensemble_dir);
+            EndFaceFluxDiagnostics(lev, dt_lev);
 
             // **********************************************************************
             // Account for particles that went from crse --> fine BEFORE Redistribute
@@ -378,9 +527,11 @@ struct ParticleData {
             // **********************************************************************
             // Advect the particles in the valid region and in the ghost region
             // **********************************************************************
+            BeginFaceFluxDiagnostics(lev, dt_lev);
             stochastic_particles->AdvectWithRandomWalk(lev, dt_lev, m_ext_pot,
                                         m_ext_pot_alpha, m_ext_pot_beta,
                                         m_ext_pot_gamma, m_ensemble_dir);
+            EndFaceFluxDiagnostics(lev, dt_lev);
             // **********************************************************************
             // Put particles on the correct levels and in the right boxes
             // **********************************************************************
@@ -427,5 +578,8 @@ struct ParticleData {
     amrex::Real m_ext_pot_beta  = amrex::Real(0.);
     amrex::Real m_ext_pot_gamma = amrex::Real(0.);
     amrex::Real m_factor = amrex::Real(0.9);
+    amrex::ParticleLocator<amrex::DenseBins<amrex::Box> > m_face_flux_valid_particle_locator;
+    FaceFluxDiagnosticsConfig m_face_flux_diag;
+    amrex::Vector<amrex::Real> m_particle_face_flux_profile;
 };
 #endif

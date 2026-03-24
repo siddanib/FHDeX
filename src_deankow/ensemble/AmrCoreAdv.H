@@ -8,6 +8,7 @@
 
 #include <AMReX_AmrCore.H>
 #include <AMReX_BCRec.H>
+#include <AMReX_Enum.H>
 #include <AMReX_FluxRegister.H>
 #include <AMReX_FillPatcher.H>
 
@@ -20,12 +21,18 @@
 #include <limits>
 #include <memory>
 #include <string>
+#include <vector>
 
 namespace torch {
 namespace jit {
 class Module;
 }
 }
+
+AMREX_ENUM(InitType,
+    uniform,
+    piecewise_x
+);
 
 class AmrCoreAdv
     : public amrex::AmrCore
@@ -142,6 +149,14 @@ private:
     void InitMLHistoryLevel (int lev, const amrex::BoxArray& ba,
                              const amrex::DistributionMapping& dm);
     void UpdateMLPhiHistory (int lev);
+    void ValidateInitializationParameters () const;
+    void InitDiagnostics ();
+    void ValidateDiagnosticsMode () const;
+    void ConfigureParticleDiagnostics ();
+    void CaptureSPDEFaceFluxProfile (int lev, amrex::Array<amrex::MultiFab, AMREX_SPACEDIM> const& fluxes);
+    void ComputeReducedDensities (int lev);
+    void WriteStepDiagnostics (int lev, amrex::Real time);
+    [[nodiscard]] int MapPhysicalXToFaceIndex (amrex::Geometry const& geom, amrex::Real x) const;
 
     ////////////////
     // private data members
@@ -198,6 +213,9 @@ private:
     amrex::Real m_ext_pot_alpha = amrex::Real(0.);
     amrex::Real m_ext_pot_beta  = amrex::Real(0.);
     amrex::Real m_ext_pot_gamma = amrex::Real(0.);
+    InitType m_init_type = InitType::uniform;
+    std::vector<amrex::Real> m_init_positions;
+    std::vector<amrex::Real> m_init_particles_per_interval;
 
     // ML flux configuration
     FluxMode m_flux_mode = FluxMode::gaussian;
@@ -246,6 +264,22 @@ private:
     // checkpoint prefix and frequency
     std::string chk_file {"chk"};
     int chk_int = -1;
+
+    struct DiagnosticsConfig {
+        bool enabled = false;
+        amrex::Real flux_x = amrex::Real(0.0);
+        amrex::Real x_min = amrex::Real(0.0);
+        amrex::Real x_max = amrex::Real(0.0);
+        std::string file {"diag.dat"};
+        int face_index = -1;
+        bool header_written = false;
+        std::vector<amrex::Real> spde_face_flux;
+        std::vector<amrex::Real> particle_face_flux;
+        amrex::Real spde_reduced_density = amrex::Real(0.0);
+        amrex::Real particle_reduced_density = amrex::Real(0.0);
+    };
+
+    DiagnosticsConfig m_diag;
 };
 
 #endif
