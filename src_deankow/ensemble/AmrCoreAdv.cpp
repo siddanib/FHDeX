@@ -17,7 +17,6 @@
 #include <AmrCoreAdv.H>
 #include <Kernels.H>
 #include <mykernel.H>
-#include <myfunc.H>
 #include "chrono"
 #include <algorithm>
 #include <cmath>
@@ -25,7 +24,6 @@
 #include <iomanip>
 #include <sstream>
 #include <type_traits>
-#include <utility>
 
 using namespace amrex;
 using namespace std::chrono;
@@ -45,7 +43,7 @@ void CaptureSPDEFaceFluxProfileImpl (
     int face_index,
     amrex::Geometry const& geom,
     amrex::MultiFab const& flux_x,
-    std::vector<amrex::Real>& spde_face_flux)
+    amrex::Vector<amrex::Real>& spde_face_flux)
 {
     const amrex::Box& domain = geom.Domain();
     const int jlo = domain.smallEnd(1);
@@ -82,41 +80,47 @@ void CaptureSPDEFaceFluxProfileImpl (
     amrex::ParallelDescriptor::ReduceRealSum(spde_face_flux.data(), ny);
 }
 
-std::pair<amrex::Real, amrex::Real> ComputeReducedDensitiesImpl (
+void ComputeReducedDensitiesImpl (
     amrex::MultiFab const& phi_mf,
     amrex::Geometry const& gm,
     amrex::Real x_min,
-    amrex::Real x_max)
+    amrex::Real x_max,
+    amrex::Vector<amrex::Real>& spde_reduced_density,
+    amrex::Vector<amrex::Real>& particle_reduced_density)
 {
+    const amrex::Box& domain = gm.Domain();
+    const int jlo = domain.smallEnd(1);
+    const int ny = domain.length(1);
     const auto prob_lo = gm.ProbLoArray();
     const auto dx = gm.CellSizeArray();
-    amrex::Real spde_sum = amrex::Real(0.0);
-    amrex::Real particle_sum = amrex::Real(0.0);
+    amrex::Gpu::DeviceVector<amrex::Real> spde_sum_d(ny, amrex::Real(0.0));
+    amrex::Gpu::DeviceVector<amrex::Real> particle_sum_d(ny, amrex::Real(0.0));
+    amrex::Real* spde_sum_ptr = spde_sum_d.dataPtr();
+    amrex::Real* particle_sum_ptr = particle_sum_d.dataPtr();
 
     for (amrex::MFIter mfi(phi_mf); mfi.isValid(); ++mfi) {
         const amrex::Box& bx = mfi.validbox();
         auto const& phi = phi_mf.const_array(mfi);
 
-        amrex::ReduceOps<amrex::ReduceOpSum, amrex::ReduceOpSum> reduce_op;
-        amrex::ReduceData<amrex::Real, amrex::Real> reduce_data(reduce_op);
-        using ReduceTuple = typename decltype(reduce_data)::Type;
-
-        reduce_op.eval(bx, reduce_data,
-        [=] AMREX_GPU_DEVICE (int i, int j, int k) -> ReduceTuple
+        amrex::ParallelFor(bx, [=] AMREX_GPU_DEVICE (int i, int j, int k) noexcept
         {
             amrex::Real x = prob_lo[0] + (static_cast<amrex::Real>(i) + amrex::Real(0.5)) * dx[0];
             if (x >= x_min && x <= x_max) {
-                return {phi(i,j,k,0), phi(i,j,k,1)};
+                amrex::Gpu::Atomic::AddNoRet(&spde_sum_ptr[j - jlo], phi(i,j,k,0));
+                amrex::Gpu::Atomic::AddNoRet(&particle_sum_ptr[j - jlo], phi(i,j,k,1));
             }
-            return {amrex::Real(0.0), amrex::Real(0.0)};
         });
-
-        auto hv = reduce_data.value();
-        spde_sum += amrex::get<0>(hv);
-        particle_sum += amrex::get<1>(hv);
     }
 
-    return {spde_sum, particle_sum};
+    amrex::Gpu::streamSynchronize();
+    amrex::Gpu::copy(amrex::Gpu::deviceToHost,
+                     spde_sum_d.begin(), spde_sum_d.end(),
+                     spde_reduced_density.begin());
+    amrex::Gpu::copy(amrex::Gpu::deviceToHost,
+                     particle_sum_d.begin(), particle_sum_d.end(),
+                     particle_reduced_density.begin());
+    amrex::ParallelDescriptor::ReduceRealSum(spde_reduced_density.data(), ny);
+    amrex::ParallelDescriptor::ReduceRealSum(particle_reduced_density.data(), ny);
 }
 
 }
@@ -1014,10 +1018,8 @@ AmrCoreAdv::ConfigureParticleDiagnostics ()
 #ifdef AMREX_PARTICLES
     ParticleData::FaceFluxDiagnosticsConfig config;
     config.enabled = true;
-    config.face_index = m_diag.face_index;
     config.face_x = Geom(0).ProbLo(0)
         + static_cast<amrex::Real>(m_diag.face_index - Geom(0).Domain().smallEnd(0)) * Geom(0).CellSize(0);
-    config.valid_box_array = boxArray(0);
     particleData.ConfigureFaceFluxDiagnostics(config);
 #endif
 }
@@ -1040,8 +1042,8 @@ AmrCoreAdv::InitDiagnostics ()
     const int ny = Geom(0).Domain().length(1);
     m_diag.spde_face_flux.assign(ny, amrex::Real(0.0));
     m_diag.particle_face_flux.assign(ny, amrex::Real(0.0));
-    m_diag.spde_reduced_density = amrex::Real(0.0);
-    m_diag.particle_reduced_density = amrex::Real(0.0);
+    m_diag.spde_reduced_density.assign(ny, amrex::Real(0.0));
+    m_diag.particle_reduced_density.assign(ny, amrex::Real(0.0));
     m_diag.header_written = false;
     if (restart_chkfile.empty() && amrex::ParallelDescriptor::IOProcessor()) {
         std::ofstream os(m_diag.file, std::ios::out | std::ios::trunc);
@@ -1074,12 +1076,10 @@ AmrCoreAdv::ComputeReducedDensities (int lev)
         return;
     }
 
-    auto sums_local = ComputeReducedDensitiesImpl(phi_new[lev], Geom(lev), m_diag.x_min, m_diag.x_max);
-
-    amrex::Real sums[2] = {sums_local.first, sums_local.second};
-    amrex::ParallelDescriptor::ReduceRealSum(sums, 2);
-    m_diag.spde_reduced_density = sums[0];
-    m_diag.particle_reduced_density = sums[1];
+    std::fill(m_diag.spde_reduced_density.begin(), m_diag.spde_reduced_density.end(), amrex::Real(0.0));
+    std::fill(m_diag.particle_reduced_density.begin(), m_diag.particle_reduced_density.end(), amrex::Real(0.0));
+    ComputeReducedDensitiesImpl(phi_new[lev], Geom(lev), m_diag.x_min, m_diag.x_max,
+                                m_diag.spde_reduced_density, m_diag.particle_reduced_density);
 
 #ifdef AMREX_PARTICLES
     auto const& particle_flux = particleData.GetFaceFluxDiagnosticsProfile();
@@ -1130,10 +1130,13 @@ AmrCoreAdv::WriteStepDiagnostics (int lev, amrex::Real time)
     const amrex::Box& domain = gm.Domain();
     const int jlo = domain.smallEnd(1);
     const int ny = domain.length(1);
-    const int rows = static_cast<int>(std::min(m_diag.spde_face_flux.size(), m_diag.particle_face_flux.size()));
+    const std::size_t rows = std::min({m_diag.spde_face_flux.size(),
+                                       m_diag.particle_face_flux.size(),
+                                       m_diag.spde_reduced_density.size(),
+                                       m_diag.particle_reduced_density.size()});
 
     os << std::setprecision(17);
-    for (int n = 0; n < amrex::min(ny, rows); ++n) {
+    for (int n = 0; n < amrex::min(ny, static_cast<int>(rows)); ++n) {
         const int j = jlo + n;
         const amrex::Real y = ylo + (static_cast<amrex::Real>(j - jlo) + amrex::Real(0.5)) * dy;
         os << istep[lev] + 1 << " "
@@ -1142,8 +1145,8 @@ AmrCoreAdv::WriteStepDiagnostics (int lev, amrex::Real time)
            << y << " "
            << m_diag.spde_face_flux[n] << " "
            << m_diag.particle_face_flux[n] << " "
-           << m_diag.spde_reduced_density << " "
-           << m_diag.particle_reduced_density << "\n";
+           << m_diag.spde_reduced_density[n] << " "
+           << m_diag.particle_reduced_density[n] << "\n";
     }
 }
 

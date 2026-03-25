@@ -1,7 +1,6 @@
 #include <AmrCoreAdv.H>
 #include <Kernels.H>
 #include <myfunc.H>
-#include <algorithm>
 
 using namespace amrex;
 

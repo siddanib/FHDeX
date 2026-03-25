@@ -24,9 +24,7 @@ struct ParticleData {
   public:
     struct FaceFluxDiagnosticsConfig {
         bool enabled = false;
-        int face_index = -1;
         amrex::Real face_x = amrex::Real(0.0);
-        amrex::BoxArray valid_box_array;
     };
 
     void init_particle_params(int max_level, int ensemble_dir_exists)
@@ -282,12 +280,6 @@ struct ParticleData {
         const auto dxi = geom.InvCellSizeArray();
         const auto is_periodic = geom.isPeriodicArray();
 
-        if (!m_face_flux_valid_particle_locator.isValid(m_face_flux_diag.valid_box_array)) {
-            m_face_flux_valid_particle_locator.build(m_face_flux_diag.valid_box_array, geom);
-        }
-        m_face_flux_valid_particle_locator.setGeometry(geom);
-        auto valid_assign_grid = m_face_flux_valid_particle_locator.getGridAssignor();
-
         amrex::Gpu::DeviceVector<amrex::Real> flux_bins_d(ny, amrex::Real(0.0));
         amrex::Real* flux_bins_ptr = flux_bins_d.dataPtr();
 
@@ -303,13 +295,8 @@ struct ParticleData {
                 amrex::Real xold = p.rdata(RealIdx::xold);
                 amrex::Real yold = p.rdata(RealIdx::yold);
                 amrex::Real xnew = p.pos(0);
-                auto old_pos = getOldCell(p, problo, dxi, domain);
                 auto new_pos = getNewCell(p, problo, dxi, domain);
-                old_pos = periodicCorrectOldCell(old_pos, new_pos, is_periodic, domain);
-
-                if (valid_assign_grid(old_pos) < 0) {
-                    return;
-                }
+                amrex::ignore_unused(new_pos, dxi, is_periodic);
 
                 amrex::Real disp = xnew - xold;
                 if (periodic_x) {
@@ -578,7 +565,6 @@ struct ParticleData {
     amrex::Real m_ext_pot_beta  = amrex::Real(0.);
     amrex::Real m_ext_pot_gamma = amrex::Real(0.);
     amrex::Real m_factor = amrex::Real(0.9);
-    amrex::ParticleLocator<amrex::DenseBins<amrex::Box> > m_face_flux_valid_particle_locator;
     FaceFluxDiagnosticsConfig m_face_flux_diag;
     amrex::Vector<amrex::Real> m_particle_face_flux_profile;
 };

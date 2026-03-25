@@ -1,6 +1,3 @@
-
-#include <iostream>
-
 #include <AMReX.H>
 #include <AMReX_BLProfiler.H>
 #include <AMReX_ParallelDescriptor.H>

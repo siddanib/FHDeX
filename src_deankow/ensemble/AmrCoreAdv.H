@@ -11,17 +11,13 @@
 #include <AMReX_Enum.H>
 #include <AMReX_FluxRegister.H>
 #include <AMReX_FillPatcher.H>
+#include <AMReX_Vector.H>
 
 #include <FluxMode.H>
-
-#ifdef AMREX_USE_OMP
-#   include <omp.h>
-#endif
 
 #include <limits>
 #include <memory>
 #include <string>
-#include <vector>
 
 namespace torch {
 namespace jit {
@@ -216,8 +212,8 @@ private:
     amrex::Real m_ext_pot_beta  = amrex::Real(0.);
     amrex::Real m_ext_pot_gamma = amrex::Real(0.);
     InitType m_init_type = InitType::uniform;
-    std::vector<amrex::Real> m_init_positions;
-    std::vector<amrex::Real> m_init_particles_per_interval;
+    amrex::Vector<amrex::Real> m_init_positions;
+    amrex::Vector<amrex::Real> m_init_particles_per_interval;
 
     // ML flux configuration
     FluxMode m_flux_mode = FluxMode::gaussian;
@@ -275,10 +271,10 @@ private:
         std::string file {"diag.dat"};
         int face_index = -1;
         bool header_written = false;
-        std::vector<amrex::Real> spde_face_flux;
-        std::vector<amrex::Real> particle_face_flux;
-        amrex::Real spde_reduced_density = amrex::Real(0.0);
-        amrex::Real particle_reduced_density = amrex::Real(0.0);
+        amrex::Vector<amrex::Real> spde_face_flux;
+        amrex::Vector<amrex::Real> particle_face_flux;
+        amrex::Vector<amrex::Real> spde_reduced_density;
+        amrex::Vector<amrex::Real> particle_reduced_density;
     };
 
     DiagnosticsConfig m_diag;
