@@ -1084,7 +1084,7 @@ AmrCoreAdv::ComputeReducedDensities (int lev)
 #ifdef AMREX_PARTICLES
     auto const& particle_flux = particleData.GetFaceFluxDiagnosticsProfile();
     std::fill(m_diag.particle_face_flux.begin(), m_diag.particle_face_flux.end(), amrex::Real(0.0));
-    const std::size_t ncopy = std::min(m_diag.particle_face_flux.size(),
+    const std::size_t ncopy = std::min(static_cast<std::size_t>(m_diag.particle_face_flux.size()),
                                        static_cast<std::size_t>(particle_flux.size()));
     for (std::size_t n = 0; n < ncopy; ++n) {
         m_diag.particle_face_flux[n] = particle_flux[n];
@@ -1130,10 +1130,10 @@ AmrCoreAdv::WriteStepDiagnostics (int lev, amrex::Real time)
     const amrex::Box& domain = gm.Domain();
     const int jlo = domain.smallEnd(1);
     const int ny = domain.length(1);
-    const std::size_t rows = std::min({m_diag.spde_face_flux.size(),
-                                       m_diag.particle_face_flux.size(),
-                                       m_diag.spde_reduced_density.size(),
-                                       m_diag.particle_reduced_density.size()});
+    const std::size_t rows = std::min({static_cast<std::size_t>(m_diag.spde_face_flux.size()),
+                                       static_cast<std::size_t>(m_diag.particle_face_flux.size()),
+                                       static_cast<std::size_t>(m_diag.spde_reduced_density.size()),
+                                       static_cast<std::size_t>(m_diag.particle_reduced_density.size())});
 
     os << std::setprecision(17);
     for (int n = 0; n < amrex::min(ny, static_cast<int>(rows)); ++n) {
