@@ -41,6 +41,7 @@ AmrCoreAdv::AdvancePhiAtLevel (int lev, Real /*time*/, Real dt_lev, int /*iterat
         ml_ctx.ml_input_scale = m_ml_input_scale;
         ml_ctx.ml_output_mn_fctr = m_ml_output_mn_fctr;
         ml_ctx.ml_output_std_fctr = m_ml_output_std_fctr;
+        ml_ctx.quantize_ml_output = m_quantize_ml_output;
         ml_ctx.module = m_ml_module.get();
         ml_ctx.use_cuda = m_ml_use_cuda;
         if (m_ml_history_len > 0) {

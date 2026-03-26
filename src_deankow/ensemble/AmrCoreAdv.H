@@ -229,6 +229,7 @@ private:
     amrex::Real m_ml_input_scale = amrex::Real(51.0);
     amrex::Real m_ml_output_mn_fctr = amrex::Real(0.069);
     amrex::Real m_ml_output_std_fctr = amrex::Real(0.2537);
+    bool m_quantize_ml_output = false;
     bool m_ml_use_cuda = false;
     std::unique_ptr<torch::jit::Module> m_ml_module;
     amrex::Vector<std::unique_ptr<amrex::MultiFab>> m_phi_hist;

@@ -28,7 +28,8 @@ struct MLFluxContext {
     amrex::Real t_scale = amrex::Real(1.0);
     amrex::Real ml_input_scale = amrex::Real(51.0);
     amrex::Real ml_output_mn_fctr = amrex::Real(0.069);
-    amrex::Real ml_output_std_fctr = amrex::Real(0.2537); 
+    amrex::Real ml_output_std_fctr = amrex::Real(0.2537);
+    bool quantize_ml_output = false;
     const amrex::MultiFab* phi_hist = nullptr;
     amrex::Array<amrex::MultiFab*, AMREX_SPACEDIM> flux_hist = {};
     torch::jit::Module* module = nullptr;

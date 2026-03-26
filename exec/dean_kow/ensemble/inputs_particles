@@ -40,7 +40,8 @@ ml_history_ngrow = 1
 # ml_t_df, ml_t_loc, ml_t_scale: Student's t parameters for x0 sampling
 # ml_input_scale: scales phi/flux inputs before they are fed to the model
 # ml_output_mn_fctr, ml_output_std_fctr: rescale model outputs back to flux units
-ml_flow_steps = 100
+# quantize_ml_output: stochastically round ML net-particle fluxes to integers
+ml_flow_steps = 20
 ml_flow_t0 = 0.0
 ml_flow_t1 = 1.0
 ml_t_df = 4.0
@@ -49,6 +50,7 @@ ml_t_scale = 1.0
 ml_input_scale = 51.0
 ml_output_mn_fctr = 0.069
 ml_output_std_fctr = 0.2537
+quantize_ml_output = false
 
 ext_pot.exists = 0
 remove_particle_history = "false"

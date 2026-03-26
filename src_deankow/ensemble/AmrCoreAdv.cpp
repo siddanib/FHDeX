@@ -850,6 +850,8 @@ AmrCoreAdv::ReadParameters ( amrex::Vector<int>& bc_lo, amrex::Vector<int>& bc_h
         pp.query("ml_output_mn_fctr", m_ml_output_mn_fctr);
         m_ml_output_std_fctr = amrex::Real(0.2537);
         pp.query("ml_output_std_fctr", m_ml_output_std_fctr);
+        m_quantize_ml_output = false;
+        pp.query("quantize_ml_output", m_quantize_ml_output);
         if (m_ml_t_df <= 0.0) {
             amrex::Abort("ml_t_df must be > 0.");
         }

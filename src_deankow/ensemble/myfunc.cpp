@@ -69,7 +69,8 @@ void FillMLStochFluxDir (int dir,
                          torch::jit::Module* module,
                          bool use_cuda, amrex::Real ml_input_scale,
                          amrex::Real ml_output_mn_fctr,
-                         amrex::Real ml_output_std_fctr)
+                         amrex::Real ml_output_std_fctr,
+                         bool quantize_ml_output)
 {
     if (module == nullptr) {
         amrex::Abort("ML flux mode requires a loaded TorchScript model.");
@@ -88,6 +89,7 @@ void FillMLStochFluxDir (int dir,
 #endif
     for (MFIter mfi(phi_old,TilingIfNotGPU()); mfi.isValid(); ++mfi)
     {
+        bool quntz_l = quantize_ml_output;
         const Box& fbx = mfi.nodaltilebox(dir);
         const auto lo = amrex::lbound(fbx);
         const auto nbox = fbx.size();
@@ -217,7 +219,8 @@ void FillMLStochFluxDir (int dir,
 
         //auto out_ptr = out_buf.dataPtr();
         auto out_ptr = tgt_t.data_ptr<amrex::Real>();
-        amrex::ParallelFor(fbx, [=] AMREX_GPU_DEVICE (int i, int j, int k)
+        amrex::ParallelForRNG(fbx, [=] AMREX_GPU_DEVICE (int i, int j, int k,
+                                           amrex::RandomEngine const& engine)
         {
             int ii = i - lo.x;
             int jj = j - lo.y;
@@ -253,6 +256,18 @@ void FillMLStochFluxDir (int dir,
             phiR = std::max(phiR, amrex::Real(0.));
             flux_val *= ml_output_std_fctr*std::sqrt(phiL+phiR);
             flux_val += ml_output_mn_fctr*(phiL-phiR);
+            // Quantization of Net particles crossing
+            if (quntz_l) {
+                phiL = std::floor(phiL);
+                phiR = std::floor(phiR);
+                amrex::Real rand_val = amrex::Random(engine);
+                if (rand_val > flux_val-std::floor(flux_val)) {
+                    flux_val =  std::floor(flux_val);
+                }
+                else {
+                    flux_val = std::ceil(flux_val);
+                }
+            }
             flux_val = std::min(flux_val, phiL);
             flux_val = std::max(flux_val, -phiR);
             stoch(i,j,k,0) = flux_val;
@@ -352,7 +367,8 @@ void advance_phi (MultiFab& phi_old,
             	                   ml_ctx->module, ml_ctx->use_cuda,
             	                   ml_ctx->ml_input_scale,
             	                   ml_ctx->ml_output_mn_fctr,
-            	                   ml_ctx->ml_output_std_fctr);
+            	                   ml_ctx->ml_output_std_fctr,
+            	                   ml_ctx->quantize_ml_output);
             	// Keep shared faces/nodes consistent across ranks.
             	stochFlux[d].OverrideSync(geom.periodicity());
             }
