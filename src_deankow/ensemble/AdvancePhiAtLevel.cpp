@@ -41,24 +41,26 @@ AmrCoreAdv::AdvancePhiAtLevel (int lev, Real /*time*/, Real dt_lev, int /*iterat
         ml_ctx.ml_input_scale = m_ml_input_scale;
         ml_ctx.ml_output_mn_fctr = m_ml_output_mn_fctr;
         ml_ctx.ml_output_std_fctr = m_ml_output_std_fctr;
-        if (!m_phi_hist[lev]) {
-            amrex::Abort("ML flux mode requires phi history buffers.");
-        }
-        ml_ctx.phi_hist = m_phi_hist[lev].get();
-        for (int d = 0; d < AMREX_SPACEDIM; ++d) {
-            if (!m_flux_hist[lev][d]) {
-                amrex::Abort("ML flux mode requires flux history buffers for all directions.");
-            }
-            flux_hist_ptrs[d] = m_flux_hist[lev][d].get();
-        }
-        ml_ctx.flux_hist = flux_hist_ptrs;
         ml_ctx.module = m_ml_module.get();
         ml_ctx.use_cuda = m_ml_use_cuda;
+        if (m_ml_history_len > 0) {
+            if (!m_phi_hist[lev]) {
+                amrex::Abort("ML flux mode requires phi history buffers.");
+            }
+            ml_ctx.phi_hist = m_phi_hist[lev].get();
+            for (int d = 0; d < AMREX_SPACEDIM; ++d) {
+                if (!m_flux_hist[lev][d]) {
+                    amrex::Abort("ML flux mode requires flux history buffers for all directions.");
+                }
+                flux_hist_ptrs[d] = m_flux_hist[lev][d].get();
+            }
+            ml_ctx.flux_hist = flux_hist_ptrs;
 
-        m_phi_hist[lev]->FillBoundary(Geom(lev).periodicity());
-        for (int d = 0; d < AMREX_SPACEDIM; ++d) {
-            // Ensure shared faces are consistent before feeding ML.
-            m_flux_hist[lev][d]->OverrideSync(Geom(lev).periodicity());
+            m_phi_hist[lev]->FillBoundary(Geom(lev).periodicity());
+            for (int d = 0; d < AMREX_SPACEDIM; ++d) {
+                // Ensure shared faces are consistent before feeding ML.
+                m_flux_hist[lev][d]->OverrideSync(Geom(lev).periodicity());
+            }
         }
     }
 

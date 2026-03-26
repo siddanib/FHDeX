@@ -818,8 +818,8 @@ AmrCoreAdv::ReadParameters ( amrex::Vector<int>& bc_lo, amrex::Vector<int>& bc_h
         if (m_ml_history_len < 0 || m_ml_history_ngrow < 0) {
             amrex::Abort("ml_history_len and ml_history_ngrow must be non-negative.");
         }
-        if (m_flux_mode == FluxMode::ml && m_ml_history_len < 1) {
-            amrex::Abort("ml_history_len must be >= 1 when flux_mode=ml.");
+        if (m_flux_mode == FluxMode::ml && m_ml_history_len < 0) {
+            amrex::Abort("ml_history_len must be >= 0 when flux_mode=ml.");
         }
         if (m_flux_mode == FluxMode::ml && m_ml_history_ngrow < 1) {
             amrex::Abort("ml_history_ngrow must be >= 1 when flux_mode=ml.");
@@ -1810,7 +1810,7 @@ AmrCoreAdv::ReadCheckpointFile ()
     if (m_flux_mode == FluxMode::ml && has_ml_header) {
         m_ml_history_len = header_ml_history_len;
         m_ml_history_ngrow = header_ml_history_ngrow;
-        if (m_ml_history_len < 1) {
+        if (m_ml_history_len < 0) {
             amrex::Abort("Restart checkpoint has invalid ml_history_len for flux_mode=ml.");
         }
         if (m_ml_history_ngrow < 1) {

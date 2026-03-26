@@ -61,8 +61,8 @@ void FillMLStochFluxDir (int dir,
                          const amrex::Real dvol,
                          amrex::MultiFab& stochFlux_dir,
                          amrex::MultiFab const& phi_old,
-                         amrex::MultiFab const& phi_hist,
-                         amrex::MultiFab& flux_hist,
+                         amrex::MultiFab const* phi_hist,
+                         amrex::MultiFab* flux_hist,
                          amrex::Geometry const& geom,
                          int hist_count, int history_len,
                          int flow_steps, amrex::Real flow_t0, amrex::Real flow_t1,
@@ -73,6 +73,12 @@ void FillMLStochFluxDir (int dir,
 {
     if (module == nullptr) {
         amrex::Abort("ML flux mode requires a loaded TorchScript model.");
+    }
+    if (history_len > 0 && phi_hist == nullptr) {
+        amrex::Abort("ML flux mode requires phi history buffers when history_len > 0.");
+    }
+    if (history_len > 0 && flux_hist == nullptr) {
+        amrex::Abort("ML flux mode requires flux history buffers when history_len > 0.");
     }
 
     const int dens_T = hist_count + 1;
@@ -92,9 +98,13 @@ void FillMLStochFluxDir (int dir,
         amrex::Gpu::ManagedVector<amrex::Real> flux_buf(ncell * flux_T);
         amrex::Gpu::ManagedVector<amrex::Real> x_buf(ncell);
         auto const& phi = phi_old.array(mfi);
-        auto const& phi_hist_arr = phi_hist.array(mfi);
-        auto const& flux_hist_arr = flux_hist.array(mfi);
         auto const& stoch = stochFlux_dir.array(mfi);
+        auto const phi_hist_arr = (phi_hist != nullptr)
+            ? phi_hist->const_array(mfi)
+            : amrex::Array4<amrex::Real const>{};
+        auto const flux_hist_arr = (flux_hist != nullptr)
+            ? flux_hist->const_array(mfi)
+            : amrex::Array4<amrex::Real const>{};
 
         auto dens_ptr = dens_buf.dataPtr();
         auto flux_ptr = flux_buf.dataPtr();
@@ -250,8 +260,10 @@ void FillMLStochFluxDir (int dir,
     }
     // The new fluxes are in terms of Net particles crossing
     // Save them to flux_hist
-    UpdateMLFluxHistory(hist_count, history_len,
-                        geom, stochFlux_dir, flux_hist);
+    if (flux_hist != nullptr) {
+        UpdateMLFluxHistory(hist_count, history_len,
+                            geom, stochFlux_dir, *flux_hist);
+    }
 }
 
 void FillStudentTStochFluxDir (int dir,
@@ -318,12 +330,14 @@ void advance_phi (MultiFab& phi_old,
             MultiFabFillRandom(stochFlux[d], 0, variance, geom);
         }
     } else {
-        if (ml_ctx->phi_hist == nullptr) {
-            amrex::Abort("ML flux mode requires history buffers.");
-        }
-        for (int d = 0; d < AMREX_SPACEDIM; ++d) {
-            if (ml_ctx->flux_hist[d] == nullptr) {
-                amrex::Abort("ML flux mode requires flux history buffers for all directions.");
+        if (ml_ctx->history_len > 0) {
+            if (ml_ctx->phi_hist == nullptr) {
+                amrex::Abort("ML flux mode requires history buffers.");
+            }
+            for (int d = 0; d < AMREX_SPACEDIM; ++d) {
+                if (ml_ctx->flux_hist[d] == nullptr) {
+                    amrex::Abort("ML flux mode requires flux history buffers for all directions.");
+                }
             }
         }
         for (int d=0; d<AMREX_SPACEDIM; ++d) {
@@ -331,8 +345,8 @@ void advance_phi (MultiFab& phi_old,
             if (a_ensemble_dir[d] == 0) {
             	FillStudentTStochFluxDir(d, stochFlux[d], geom,
             	                         ml_ctx->t_df, ml_ctx->t_loc, ml_ctx->t_scale);
-            	FillMLStochFluxDir(d, dvol, stochFlux[d], phi_old, *(ml_ctx->phi_hist),
-            	                   *(ml_ctx->flux_hist[d]), geom, ml_ctx->hist_count,
+            	FillMLStochFluxDir(d, dvol, stochFlux[d], phi_old, ml_ctx->phi_hist,
+            	                   ml_ctx->flux_hist[d], geom, ml_ctx->hist_count,
             	                   ml_ctx->history_len,
             	                   ml_ctx->flow_steps, ml_ctx->flow_t0, ml_ctx->flow_t1,
             	                   ml_ctx->module, ml_ctx->use_cuda,
