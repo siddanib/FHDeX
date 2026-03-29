@@ -377,6 +377,8 @@ void advance_phi (MultiFab& phi_old,
 
     const BCRec& bc = BoundaryCondition[0];
 
+    bool quantize_fluxes = (use_ml && ml_ctx->quantize_ml_output);
+
     // Compute fluxes one grid at a time
     for ( MFIter mfi(phi_old); mfi.isValid(); ++mfi )
     {
@@ -400,43 +402,96 @@ void advance_phi (MultiFab& phi_old,
         auto const& phi = phi_old.array(mfi);
 
         if (a_ensemble_dir[0] == 0) {
-            amrex::ParallelFor(xbx,
-                [=] AMREX_GPU_DEVICE (int i, int j, int k)
-                {
-                    compute_flux_x(i,j,k,fluxx,stochfluxx,phi,
-                                   AMREX_D_DECL(dxinv, dyinv, dzinv), dt,
-                                   lo.x, hi.x, dom_lo.x, dom_hi.x, bc.lo(0), bc.hi(0),Ncomp,
-                                   a_ext_pot, a_alpha, a_beta, a_gamma, a_d_spde,
-                                   use_ml ? FluxMode::ml : FluxMode::gaussian);
-                });
+            if (quantize_fluxes) {
+                amrex::ParallelForRNG(xbx,
+                    [=] AMREX_GPU_DEVICE (int i, int j, int k,
+                               amrex::RandomEngine const& engine)
+                    {
+                        compute_flux_x_quantized(i,j,k,fluxx,stochfluxx,phi,
+                                                 AMREX_D_DECL(dxinv, dyinv, dzinv), dt,
+                                                 lo.x, hi.x, dom_lo.x, dom_hi.x,
+                                                 bc.lo(0), bc.hi(0), Ncomp,
+                                                 a_ext_pot, a_alpha, a_beta, a_gamma, a_d_spde,
+                                                 use_ml ? FluxMode::ml : FluxMode::gaussian,
+                                                 engine);
+                    });
+            } else {
+                amrex::ParallelFor(xbx,
+                    [=] AMREX_GPU_DEVICE (int i, int j, int k)
+                    {
+                        compute_flux_x(i,j,k,fluxx,stochfluxx,phi,
+                                       AMREX_D_DECL(dxinv, dyinv, dzinv), dt,
+                                       lo.x, hi.x, dom_lo.x, dom_hi.x, bc.lo(0), bc.hi(0),Ncomp,
+                                       a_ext_pot, a_alpha, a_beta, a_gamma, a_d_spde,
+                                       use_ml ? FluxMode::ml : FluxMode::gaussian);
+                    });
+            }
         }
 
         if (a_ensemble_dir[1] == 0) {
-            amrex::ParallelFor(ybx,
-                [=] AMREX_GPU_DEVICE (int i, int j, int k)
-                {
-                    compute_flux_y(i,j,k,fluxy,stochfluxy,phi,
-                                   AMREX_D_DECL(dxinv, dyinv, dzinv), dt,
-                                   lo.y, hi.y, dom_lo.y, dom_hi.y, bc.lo(1), bc.hi(1),Ncomp,
-                                   a_ext_pot, a_alpha, a_beta, a_gamma, a_d_spde,
-                                   use_ml ? FluxMode::ml : FluxMode::gaussian);
-                });
+            if (quantize_fluxes) {
+                amrex::ParallelForRNG(ybx,
+                    [=] AMREX_GPU_DEVICE (int i, int j, int k,
+                               amrex::RandomEngine const& engine)
+                    {
+                        compute_flux_y_quantized(i,j,k,fluxy,stochfluxy,phi,
+                                                 AMREX_D_DECL(dxinv, dyinv, dzinv), dt,
+                                                 lo.y, hi.y, dom_lo.y, dom_hi.y,
+                                                 bc.lo(1), bc.hi(1), Ncomp,
+                                                 a_ext_pot, a_alpha, a_beta, a_gamma, a_d_spde,
+                                                 use_ml ? FluxMode::ml : FluxMode::gaussian,
+                                                 engine);
+                    });
+            } else {
+                amrex::ParallelFor(ybx,
+                    [=] AMREX_GPU_DEVICE (int i, int j, int k)
+                    {
+                        compute_flux_y(i,j,k,fluxy,stochfluxy,phi,
+                                       AMREX_D_DECL(dxinv, dyinv, dzinv), dt,
+                                       lo.y, hi.y, dom_lo.y, dom_hi.y, bc.lo(1), bc.hi(1),Ncomp,
+                                       a_ext_pot, a_alpha, a_beta, a_gamma, a_d_spde,
+                                       use_ml ? FluxMode::ml : FluxMode::gaussian);
+                    });
+            }
         }
 #if (AMREX_SPACEDIM > 2)
         if (a_ensemble_dir[2] == 0) {
-            amrex::ParallelFor(zbx,
-                [=] AMREX_GPU_DEVICE (int i, int j, int k)
-                {
-                    compute_flux_z(i,j,k,fluxz,stochfluxz,phi,
-                                   AMREX_D_DECL(dxinv, dyinv, dzinv), dt,
-                                   lo.z, hi.z, dom_lo.z, dom_hi.z, bc.lo(2), bc.hi(2),Ncomp,
-                                   a_ext_pot, a_alpha, a_beta, a_gamma, a_d_spde,
-                                   use_ml ? FluxMode::ml : FluxMode::gaussian);
-                });
+            if (quantize_fluxes) {
+                amrex::ParallelForRNG(zbx,
+                    [=] AMREX_GPU_DEVICE (int i, int j, int k,
+                               amrex::RandomEngine const& engine)
+                    {
+                        compute_flux_z_quantized(i,j,k,fluxz,stochfluxz,phi,
+                                                 AMREX_D_DECL(dxinv, dyinv, dzinv), dt,
+                                                 lo.z, hi.z, dom_lo.z, dom_hi.z,
+                                                 bc.lo(2), bc.hi(2), Ncomp,
+                                                 a_ext_pot, a_alpha, a_beta, a_gamma, a_d_spde,
+                                                 use_ml ? FluxMode::ml : FluxMode::gaussian,
+                                                 engine);
+                    });
+            } else {
+                amrex::ParallelFor(zbx,
+                    [=] AMREX_GPU_DEVICE (int i, int j, int k)
+                    {
+                        compute_flux_z(i,j,k,fluxz,stochfluxz,phi,
+                                       AMREX_D_DECL(dxinv, dyinv, dzinv), dt,
+                                       lo.z, hi.z, dom_lo.z, dom_hi.z, bc.lo(2), bc.hi(2),Ncomp,
+                                       a_ext_pot, a_alpha, a_beta, a_gamma, a_d_spde,
+                                       use_ml ? FluxMode::ml : FluxMode::gaussian);
+                    });
+            }
         }
 #endif
     }
 
+    // Perform an OverrideSync if quantization was performed
+    if (quantize_fluxes) {
+        flux[0].OverrideSync(geom.periodicity());
+        flux[1].OverrideSync(geom.periodicity());
+#if (AMREX_SPACEDIM == 3)
+        flux[2].OverrideSync(geom.periodicity());
+#endif
+    }
     // Advance the solution one grid at a time
     for ( MFIter mfi(phi_old); mfi.isValid(); ++mfi )
     {
@@ -448,52 +503,66 @@ void advance_phi (MultiFab& phi_old,
 #endif
         auto const& phiOld = phi_old.array(mfi);
         auto const& phiNew = phi_new.array(mfi);
-
-        amrex::ParallelFor(vbx,
-        [=] AMREX_GPU_DEVICE (int i, int j, int k)
-        {
-            update_phi(i,j,k,phiOld,phiNew,
-                       AMREX_D_DECL(fluxx,fluxy,fluxz),
-                       dt,
-                       AMREX_D_DECL(dxinv,dyinv,dzinv),
-                       Ncomp);
-        });
+        if (quantize_fluxes) {
+            amrex::ParallelFor(vbx,
+            [=] AMREX_GPU_DEVICE (int i, int j, int k)
+            {
+                update_phi_quantized(i,j,k,phiOld,phiNew,
+                           AMREX_D_DECL(fluxx,fluxy,fluxz),
+                           dt,
+                           AMREX_D_DECL(dxinv,dyinv,dzinv),
+                           Ncomp);
+            });
+        }
+        else {
+            amrex::ParallelFor(vbx,
+            [=] AMREX_GPU_DEVICE (int i, int j, int k)
+            {
+                update_phi(i,j,k,phiOld,phiNew,
+                           AMREX_D_DECL(fluxx,fluxy,fluxz),
+                           dt,
+                           AMREX_D_DECL(dxinv,dyinv,dzinv),
+                           Ncomp);
+            });
+        }
     }
 
-    Real dx, dy, dz = 1.;
-    AMREX_D_TERM(dx = geom.CellSize(0);,
-                 dy = geom.CellSize(1);,
-                 dz = geom.CellSize(2););
+    if (!quantize_fluxes) {
+        Real dx, dy, dz = 1.;
+        AMREX_D_TERM(dx = geom.CellSize(0);,
+                     dy = geom.CellSize(1);,
+                     dz = geom.CellSize(2););
 
-    // Compute fluxes one grid at a time
-    for ( MFIter mfi(phi_old); mfi.isValid(); ++mfi )
-    {
-        const Box& xbx = mfi.nodaltilebox(0);
-        const Box& ybx = mfi.nodaltilebox(1);
+        // Compute fluxes one grid at a time
+        for ( MFIter mfi(phi_old); mfi.isValid(); ++mfi )
+        {
+            const Box& xbx = mfi.nodaltilebox(0);
+            const Box& ybx = mfi.nodaltilebox(1);
 
-        auto const& fluxx = flux[0].array(mfi);
-        auto const& fluxy = flux[1].array(mfi);
+            auto const& fluxx = flux[0].array(mfi);
+            auto const& fluxy = flux[1].array(mfi);
 
-        amrex::ParallelFor(xbx, Ncomp,
-            [=] AMREX_GPU_DEVICE (int i, int j, int k, int n)
-            {
-                 fluxx(i,j,k,n) *= dt * dy * dz;
-            });
+            amrex::ParallelFor(xbx, Ncomp,
+                [=] AMREX_GPU_DEVICE (int i, int j, int k, int n)
+                {
+                     fluxx(i,j,k,n) *= dt * dy * dz;
+                });
 
-        amrex::ParallelFor(ybx, Ncomp,
-            [=] AMREX_GPU_DEVICE (int i, int j, int k, int n)
-            {
-                 fluxy(i,j,k,n) *= dt * dx * dz;
-            });
+            amrex::ParallelFor(ybx, Ncomp,
+                [=] AMREX_GPU_DEVICE (int i, int j, int k, int n)
+                {
+                     fluxy(i,j,k,n) *= dt * dx * dz;
+                });
 
 #if (AMREX_SPACEDIM > 2)
-        const Box& zbx = mfi.nodaltilebox(2);
-        auto const& fluxz = flux[2].array(mfi);
-        amrex::ParallelFor(zbx, Ncomp,
-            [=] AMREX_GPU_DEVICE (int i, int j, int k, int n)
-            {
-                 fluxz(i,j,k,n) *= dt * dx * dy;
-            });
+            const Box& zbx = mfi.nodaltilebox(2);
+            auto const& fluxz = flux[2].array(mfi);
+            amrex::ParallelFor(zbx, Ncomp,
+                [=] AMREX_GPU_DEVICE (int i, int j, int k, int n)
+                {
+                     fluxz(i,j,k,n) *= dt * dx * dy;
+                });
 #endif
+        }
     }
 }

@@ -300,6 +300,39 @@ void compute_flux_x (int i, int j, int k,
 }
 
 AMREX_GPU_DEVICE AMREX_FORCE_INLINE
+void compute_flux_x_quantized (int i, int j, int k,
+                               amrex::Array4<amrex::Real> const& fluxx,
+                               amrex::Array4<amrex::Real> const& stochfluxx,
+                               amrex::Array4<amrex::Real const> const& phi,
+                               AMREX_D_DECL(amrex::Real dxinv, amrex::Real dyinv,amrex::Real dzinv),
+                               amrex::Real dt,
+                               int lo, int hi, int dom_lo, int dom_hi, int bc_lo, int bc_hi,int Ncomp,
+                               int a_ext_pot, amrex::Real a_alpha, amrex::Real a_beta,
+                               amrex::Real a_gamma, amrex::Real a_d_spde,
+                               FluxMode flux_mode,
+                               amrex::RandomEngine const& engine)
+{
+    compute_flux_x(i, j, k, fluxx, stochfluxx, phi,
+                   AMREX_D_DECL(dxinv, dyinv, dzinv), dt,
+                   lo, hi, dom_lo, dom_hi, bc_lo, bc_hi, Ncomp,
+                   a_ext_pot, a_alpha, a_beta, a_gamma, a_d_spde, flux_mode);
+    // The flux returned has the units of m^-2s^-1. Convert this to number of particles  
+    int coeff_index = 0;
+    amrex::Real face_area_x = AMREX_D_TERM(amrex::Real(1.),*dyinv,*dzinv); 
+    amrex::Real flux_val = fluxx(i,j,k,coeff_index);
+    // Note area is inverted
+    flux_val *= (dt/face_area_x);
+    amrex::Real rand_val = amrex::Random(engine);
+    if (rand_val > flux_val-std::floor(flux_val)) {
+        flux_val =  std::floor(flux_val);
+    }
+    else {
+        flux_val = std::ceil(flux_val);
+    }
+    fluxx(i,j,k,coeff_index) = flux_val;
+}
+
+AMREX_GPU_DEVICE AMREX_FORCE_INLINE
 void compute_flux_y (int i, int j, int k,
                      amrex::Array4<amrex::Real> const& fluxy,
                      amrex::Array4<amrex::Real> const& stochfluxy,
@@ -378,7 +411,7 @@ void compute_flux_y (int i, int j, int k,
        amrex::Real phiavg = 0.5*(phip+phim);
        amrex::Real Vsuby;
        Vsuby = 4.*(yloc - .5)*(yloc - .5)*(yloc - .5) / gamma;
-       fluxy(i,j,k,0) += phiavg * Vsuby;
+       fluxy(i,j,k,coeff_index) += phiavg * Vsuby;
     }
     // If the boundary is a wall flux has to be ZERO
     if (j == dom_lo && wall_lo) {
@@ -386,6 +419,39 @@ void compute_flux_y (int i, int j, int k,
     } else if (j == dom_hi+1 && wall_hi) {
         fluxy(i,j,k,coeff_index) = amrex::Real(0.);
     }
+}
+
+AMREX_GPU_DEVICE AMREX_FORCE_INLINE
+void compute_flux_y_quantized (int i, int j, int k,
+                               amrex::Array4<amrex::Real> const& fluxy,
+                               amrex::Array4<amrex::Real> const& stochfluxy,
+                               amrex::Array4<amrex::Real const> const& phi,
+                               AMREX_D_DECL(amrex::Real dxinv, amrex::Real dyinv,amrex::Real dzinv),
+                               amrex::Real dt,
+                               int lo, int hi, int dom_lo, int dom_hi, int bc_lo, int bc_hi, int Ncomp,
+                               int a_ext_pot, amrex::Real a_alpha, amrex::Real a_beta,
+                               amrex::Real a_gamma, amrex::Real a_d_spde,
+                               FluxMode flux_mode,
+                               amrex::RandomEngine const& engine)
+{
+    compute_flux_y(i, j, k, fluxy, stochfluxy, phi,
+                   AMREX_D_DECL(dxinv, dyinv, dzinv), dt,
+                   lo, hi, dom_lo, dom_hi, bc_lo, bc_hi, Ncomp,
+                   a_ext_pot, a_alpha, a_beta, a_gamma, a_d_spde, flux_mode);
+    // The flux returned has the units of m^-2s^-1. Convert this to number of particles  
+    int coeff_index = 0;
+    amrex::Real face_area_y = AMREX_D_TERM(dxinv, *amrex::Real(1.),*dzinv); 
+    amrex::Real flux_val = fluxy(i,j,k,coeff_index);
+    // Note area is inverted
+    flux_val *= (dt/face_area_y);
+    amrex::Real rand_val = amrex::Random(engine);
+    if (rand_val > flux_val-std::floor(flux_val)) {
+        flux_val =  std::floor(flux_val);
+    }
+    else {
+        flux_val = std::ceil(flux_val);
+    }
+    fluxy(i,j,k,coeff_index) = flux_val;
 }
 
 
@@ -463,6 +529,39 @@ void compute_flux_z (int i, int j, int k,
         }
     }
 }
+
+AMREX_GPU_DEVICE AMREX_FORCE_INLINE
+void compute_flux_z_quantized (int i, int j, int k,
+                               amrex::Array4<amrex::Real> const& fluxz,
+                               amrex::Array4<amrex::Real> const& stochfluxz,
+                               amrex::Array4<amrex::Real const> const& phi,
+                               AMREX_D_DECL(amrex::Real dxinv, amrex::Real dyinv,amrex::Real dzinv),
+                               amrex::Real dt,
+                               int lo, int hi, int dom_lo, int dom_hi, int bc_lo, int bc_hi, int Ncomp,
+                               int a_ext_pot, amrex::Real a_alpha, amrex::Real a_beta,
+                               amrex::Real a_gamma, amrex::Real a_d_spde,
+                               FluxMode flux_mode,
+                               amrex::RandomEngine const& engine)
+{
+    compute_flux_z(i, j, k, fluxz, stochfluxz, phi,
+                   AMREX_D_DECL(dxinv, dyinv, dzinv), dt,
+                   lo, hi, dom_lo, dom_hi, bc_lo, bc_hi, Ncomp,
+                   a_ext_pot, a_alpha, a_beta, a_gamma, a_d_spde, flux_mode);
+    // The flux returned has the units of m^-2s^-1. Convert this to number of particles  
+    int coeff_index = 0;
+    amrex::Real face_area_z = AMREX_D_TERM(dxinv,*dyinv,amrex::Real(1.)); 
+    amrex::Real flux_val = fluxz(i,j,k,coeff_index);
+    // Note area is inverted
+    flux_val *= (dt/face_area_z);
+    amrex::Real rand_val = amrex::Random(engine);
+    if (rand_val > flux_val-std::floor(flux_val)) {
+        flux_val =  std::floor(flux_val);
+    }
+    else {
+        flux_val = std::ceil(flux_val);
+    }
+    fluxz(i,j,k,coeff_index) = flux_val;
+}
 #endif
 
 AMREX_GPU_DEVICE AMREX_FORCE_INLINE
@@ -484,6 +583,33 @@ void update_phi (int i, int j, int k,
             +  dt * dyinv * (fluxy(i  ,j+1,k,n  ) - fluxy(i,j,k,n))
 #if (AMREX_SPACEDIM > 2)
             +  dt * dzinv * (fluxz(i  ,j  ,k+1,n) - fluxz(i,j,k,n));
+#else
+            ;
+#endif
+    }
+}
+
+AMREX_GPU_DEVICE AMREX_FORCE_INLINE
+void update_phi_quantized (int i, int j, int k,
+                 amrex::Array4<amrex::Real const> const& phiold,
+                 amrex::Array4<amrex::Real      > const& phinew,
+                 AMREX_D_DECL(amrex::Array4<amrex::Real const> const& fluxx,
+                              amrex::Array4<amrex::Real const> const& fluxy,
+                              amrex::Array4<amrex::Real const> const& fluxz),
+                 amrex::Real dt,
+                 AMREX_D_DECL(amrex::Real dxinv,
+                              amrex::Real dyinv,
+                              amrex::Real dzinv),
+                 int Ncomp)
+{
+    // Fluxes are already in net particles crossing in dt time
+    amrex::Real dvolinv = AMREX_D_TERM(dxinv,*dyinv,*dzinv);
+    for (int n = 0; n < Ncomp; n++){
+        phinew(i,j,k,n) = phiold(i,j,k,n)
+            +  dvolinv * (fluxx(i+1,j  ,k,n  ) - fluxx(i,j,k,n))
+            +  dvolinv * (fluxy(i  ,j+1,k,n  ) - fluxy(i,j,k,n))
+#if (AMREX_SPACEDIM > 2)
+            +  dvolinv * (fluxz(i  ,j  ,k+1,n) - fluxz(i,j,k,n));
 #else
             ;
 #endif
