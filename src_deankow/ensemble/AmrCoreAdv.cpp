@@ -667,21 +667,20 @@ void AmrCoreAdv::MakeNewLevelFromScratch (int lev, Real time, const BoxArray& ba
 void
 AmrCoreAdv::InitializeExternalPotentialXLevel0 (amrex::MultiFab& phi, amrex::Real time)
 {
+#if (AMREX_SPACEDIM != 2)
+    amrex::ignore_unused(phi, time);
+    amrex::Abort("external_potential_x initialization is only implemented for AMREX_SPACEDIM == 2.");
+#else
     const auto prob_lo = Geom(0).ProbLoArray();
     const auto dx = Geom(0).CellSizeArray();
     const Box& domain = Geom(0).Domain();
     const amrex::Real x_min = m_init_x_range[0];
     const amrex::Real x_max = m_init_x_range[1];
     const int ncomp = phi.nComp();
+    const bool y_is_ensemble = (m_ensemble_dir[1] != 0);
     EnsembleDirection ens_dir{AMREX_D_DECL(m_ensemble_dir[0], m_ensemble_dir[1], m_ensemble_dir[2])};
 
-    amrex::Real cell_volume = dx[0];
-#if (AMREX_SPACEDIM > 1)
-    cell_volume *= dx[1];
-#endif
-#if (AMREX_SPACEDIM > 2)
-    cell_volume *= dx[2];
-#endif
+    const amrex::Real cell_volume = y_is_ensemble ? dx[0] : dx[0] * dx[1];
 
     const BoxArray& ba = phi.boxArray();
     amrex::Long num_selected_cells = 0;
@@ -706,11 +705,28 @@ AmrCoreAdv::InitializeExternalPotentialXLevel0 (amrex::MultiFab& phi, amrex::Rea
         num_selected_cells = 0;
         min_potential = std::numeric_limits<amrex::Real>::max();
 
-        // Traverse the global BoxArray so initialization is independent of the
-        // current DistributionMapping.
-        for (int bi = 0; bi < ba.size(); ++bi) {
-            const Box& vbx = ba[bi];
-            for (int k = vbx.smallEnd(2); k <= vbx.bigEnd(2); ++k) {
+        if (y_is_ensemble) {
+            const int ilo = domain.smallEnd(0);
+            const int ihi = domain.bigEnd(0);
+            const amrex::Real y_ref = prob_lo[1]
+                + (static_cast<amrex::Real>(domain.smallEnd(1)) + amrex::Real(0.5)) * dx[1];
+            for (int i = ilo; i <= ihi; ++i) {
+                if (!cell_is_selected(i)) {
+                    continue;
+                }
+
+                const amrex::Real x = prob_lo[0]
+                    + (static_cast<amrex::Real>(i) + amrex::Real(0.5)) * dx[0];
+                const amrex::Real potential =
+                    external_potential_value(m_external_potential, ens_dir, time, x, y_ref);
+                min_potential = std::min(min_potential, potential);
+                ++num_selected_cells;
+            }
+        } else {
+            // Traverse the global BoxArray so initialization is independent of the
+            // current DistributionMapping.
+            for (int bi = 0; bi < ba.size(); ++bi) {
+                const Box& vbx = ba[bi];
                 for (int j = vbx.smallEnd(1); j <= vbx.bigEnd(1); ++j) {
                     for (int i = vbx.smallEnd(0); i <= vbx.bigEnd(0); ++i) {
                         if (!cell_is_selected(i)) {
@@ -721,14 +737,8 @@ AmrCoreAdv::InitializeExternalPotentialXLevel0 (amrex::MultiFab& phi, amrex::Rea
                             + (static_cast<amrex::Real>(i) + amrex::Real(0.5)) * dx[0];
                         const amrex::Real y = prob_lo[1]
                             + (static_cast<amrex::Real>(j) + amrex::Real(0.5)) * dx[1];
-#if (AMREX_SPACEDIM > 2)
-                        const amrex::Real z = prob_lo[2]
-                            + (static_cast<amrex::Real>(k) + amrex::Real(0.5)) * dx[2];
-#else
-                        const amrex::Real z = amrex::Real(0.0);
-#endif
                         const amrex::Real potential =
-                            external_potential_value(m_external_potential, ens_dir, time, x, y, z);
+                            external_potential_value(m_external_potential, ens_dir, time, x, y);
                         min_potential = std::min(min_potential, potential);
                         ++num_selected_cells;
                     }
@@ -759,9 +769,25 @@ AmrCoreAdv::InitializeExternalPotentialXLevel0 (amrex::MultiFab& phi, amrex::Rea
     amrex::ParallelDescriptor::ReduceRealMin(min_potential);
 
     amrex::Real weight_sum = amrex::Real(0.0);
-    for (int bi = 0; bi < ba.size(); ++bi) {
-        const Box& vbx = ba[bi];
-        for (int k = vbx.smallEnd(2); k <= vbx.bigEnd(2); ++k) {
+    if (y_is_ensemble) {
+        const int ilo = domain.smallEnd(0);
+        const int ihi = domain.bigEnd(0);
+        const amrex::Real y_ref = prob_lo[1]
+            + (static_cast<amrex::Real>(domain.smallEnd(1)) + amrex::Real(0.5)) * dx[1];
+        for (int i = ilo; i <= ihi; ++i) {
+            if (!cell_is_selected(i)) {
+                continue;
+            }
+
+            const amrex::Real x = prob_lo[0]
+                + (static_cast<amrex::Real>(i) + amrex::Real(0.5)) * dx[0];
+            const amrex::Real potential =
+                external_potential_value(m_external_potential, ens_dir, time, x, y_ref);
+            weight_sum += std::exp(amrex::Real(-2.0) * (potential - min_potential));
+        }
+    } else {
+        for (int bi = 0; bi < ba.size(); ++bi) {
+            const Box& vbx = ba[bi];
             for (int j = vbx.smallEnd(1); j <= vbx.bigEnd(1); ++j) {
                 for (int i = vbx.smallEnd(0); i <= vbx.bigEnd(0); ++i) {
                     if (!cell_is_selected(i)) {
@@ -772,14 +798,8 @@ AmrCoreAdv::InitializeExternalPotentialXLevel0 (amrex::MultiFab& phi, amrex::Rea
                         + (static_cast<amrex::Real>(i) + amrex::Real(0.5)) * dx[0];
                     const amrex::Real y = prob_lo[1]
                         + (static_cast<amrex::Real>(j) + amrex::Real(0.5)) * dx[1];
-#if (AMREX_SPACEDIM > 2)
-                    const amrex::Real z = prob_lo[2]
-                        + (static_cast<amrex::Real>(k) + amrex::Real(0.5)) * dx[2];
-#else
-                    const amrex::Real z = amrex::Real(0.0);
-#endif
                     const amrex::Real potential =
-                        external_potential_value(m_external_potential, ens_dir, time, x, y, z);
+                        external_potential_value(m_external_potential, ens_dir, time, x, y);
                     weight_sum += std::exp(amrex::Real(-2.0) * (potential - min_potential));
                 }
             }
@@ -794,38 +814,31 @@ AmrCoreAdv::InitializeExternalPotentialXLevel0 (amrex::MultiFab& phi, amrex::Rea
     for (MFIter mfi(phi); mfi.isValid(); ++mfi) {
         const Box& vbx = mfi.validbox();
         auto const& phi_arr = phi.array(mfi);
-        for (int k = vbx.smallEnd(2); k <= vbx.bigEnd(2); ++k) {
-            for (int j = vbx.smallEnd(1); j <= vbx.bigEnd(1); ++j) {
-                for (int i = vbx.smallEnd(0); i <= vbx.bigEnd(0); ++i) {
-                    if (!cell_is_selected(i)) {
-                        continue;
-                    }
+        for (int j = vbx.smallEnd(1); j <= vbx.bigEnd(1); ++j) {
+            for (int i = vbx.smallEnd(0); i <= vbx.bigEnd(0); ++i) {
+                if (!cell_is_selected(i)) {
+                    continue;
+                }
 
-                    const amrex::Real x = prob_lo[0]
-                        + (static_cast<amrex::Real>(i) + amrex::Real(0.5)) * dx[0];
-                    const amrex::Real y = prob_lo[1]
-                        + (static_cast<amrex::Real>(j) + amrex::Real(0.5)) * dx[1];
-#if (AMREX_SPACEDIM > 2)
-                    const amrex::Real z = prob_lo[2]
-                        + (static_cast<amrex::Real>(k) + amrex::Real(0.5)) * dx[2];
-#else
-                    const amrex::Real z = amrex::Real(0.0);
-#endif
-                    const amrex::Real potential =
-                        external_potential_value(m_external_potential, ens_dir, time, x, y, z);
-                    const amrex::Real weight =
-                        std::exp(amrex::Real(-2.0) * (potential - min_potential));
-                    const amrex::Real density =
-                        m_init_total_particles * weight
-                        / (weight_sum * cell_volume);
-                    phi_arr(i,j,k,0) = density;
-                    if (ncomp == 2) {
-                        phi_arr(i,j,k,1) = density;
-                    }
+                const amrex::Real x = prob_lo[0]
+                    + (static_cast<amrex::Real>(i) + amrex::Real(0.5)) * dx[0];
+                const amrex::Real y = prob_lo[1]
+                    + (static_cast<amrex::Real>(j) + amrex::Real(0.5)) * dx[1];
+                const amrex::Real potential =
+                    external_potential_value(m_external_potential, ens_dir, time, x, y);
+                const amrex::Real weight =
+                    std::exp(amrex::Real(-2.0) * (potential - min_potential));
+                const amrex::Real density =
+                    m_init_total_particles * weight
+                    / (weight_sum * cell_volume);
+                phi_arr(i,j,0,0) = density;
+                if (ncomp == 2) {
+                    phi_arr(i,j,0,1) = density;
                 }
             }
         }
     }
+#endif
 }
 
 void
@@ -1125,8 +1138,14 @@ AmrCoreAdv::ValidateInitializationParameters () const
         if (!m_external_potential.enabled) {
             amrex::Abort("external_potential_x initialization requires ext_pot.exists = 1.");
         }
+        if (AMREX_SPACEDIM != 2) {
+            amrex::Abort("external_potential_x initialization is only implemented for AMREX_SPACEDIM == 2.");
+        }
         if (m_init_x_range.size() != 2) {
             amrex::Abort("external_potential_x initialization requires init_x_range to contain exactly two entries.");
+        }
+        if (m_ensemble_dir[0] != 0) {
+            amrex::Abort("external_potential_x initialization does not support x as an ensemble direction.");
         }
 
         const amrex::Real x_min = m_init_x_range[0];
