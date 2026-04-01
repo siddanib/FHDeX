@@ -669,8 +669,6 @@ AmrCoreAdv::InitializeExternalPotentialXLevel0 (amrex::MultiFab& phi, amrex::Rea
 {
     struct SelectedCellData {
         amrex::Real weight = amrex::Real(0.0);
-        amrex::Real fractional = amrex::Real(0.0);
-        long long count = 0;
     };
 
     const auto prob_lo = Geom(0).ProbLoArray();
@@ -678,7 +676,6 @@ AmrCoreAdv::InitializeExternalPotentialXLevel0 (amrex::MultiFab& phi, amrex::Rea
     const amrex::Real x_min = m_init_x_range[0];
     const amrex::Real x_max = m_init_x_range[1];
     const int ncomp = phi.nComp();
-    const long long total_particles = static_cast<long long>(std::llround(m_init_total_particles));
     EnsembleDirection ens_dir{AMREX_D_DECL(m_ensemble_dir[0], m_ensemble_dir[1], m_ensemble_dir[2])};
 
     amrex::Real cell_volume = dx[0];
@@ -715,49 +712,29 @@ AmrCoreAdv::InitializeExternalPotentialXLevel0 (amrex::MultiFab& phi, amrex::Rea
                     const amrex::Real potential =
                         external_potential_value(m_external_potential, ens_dir, time, x, y, z);
                     min_potential = std::min(min_potential, potential);
-                    selected_cells.push_back(SelectedCellData{potential, amrex::Real(0.0), 0});
+                    selected_cells.push_back(SelectedCellData{potential});
                 }
             }
         }
     }
 
-    if (selected_cells.empty()) {
+    long long num_selected_cells = static_cast<long long>(selected_cells.size());
+    amrex::ParallelDescriptor::ReduceLongSum(num_selected_cells);
+    if (num_selected_cells == 0) {
         amrex::Abort("external_potential_x initialization selected zero level-0 cells.");
     }
+
+    amrex::ParallelDescriptor::ReduceRealMin(min_potential);
 
     amrex::Real weight_sum = amrex::Real(0.0);
     for (auto& cell : selected_cells) {
         cell.weight = std::exp(amrex::Real(-2.0) * (cell.weight - min_potential));
         weight_sum += cell.weight;
     }
+    amrex::ParallelDescriptor::ReduceRealSum(weight_sum);
 
     if (!(weight_sum > amrex::Real(0.0))) {
         amrex::Abort("external_potential_x initialization produced zero total probability weight.");
-    }
-
-    long long assigned_particles = 0;
-    for (auto& cell : selected_cells) {
-        const amrex::Real expected = (cell.weight / weight_sum) * m_init_total_particles;
-        cell.count = static_cast<long long>(std::floor(expected));
-        cell.fractional = expected - static_cast<amrex::Real>(cell.count);
-        assigned_particles += cell.count;
-    }
-
-    const long long remainder = total_particles - assigned_particles;
-    if (remainder < 0 || remainder > static_cast<long long>(selected_cells.size())) {
-        amrex::Abort("external_potential_x initialization computed an invalid particle remainder.");
-    }
-
-    amrex::Vector<std::size_t> order(selected_cells.size());
-    for (std::size_t idx = 0; idx < order.size(); ++idx) {
-        order[idx] = idx;
-    }
-    std::stable_sort(order.begin(), order.end(),
-                     [&selected_cells] (std::size_t lhs, std::size_t rhs) {
-                         return selected_cells[lhs].fractional > selected_cells[rhs].fractional;
-                     });
-    for (long long idx = 0; idx < remainder; ++idx) {
-        selected_cells[order[static_cast<std::size_t>(idx)]].count += 1;
     }
 
     phi.setVal(amrex::Real(0.0));
@@ -775,7 +752,8 @@ AmrCoreAdv::InitializeExternalPotentialXLevel0 (amrex::MultiFab& phi, amrex::Rea
                     }
 
                     const amrex::Real density =
-                        static_cast<amrex::Real>(selected_cells[selected_idx].count) / cell_volume;
+                        m_init_total_particles * selected_cells[selected_idx].weight
+                        / (weight_sum * cell_volume);
                     phi_arr(i,j,k,0) = density;
                     if (ncomp == 2) {
                         phi_arr(i,j,k,1) = density;
