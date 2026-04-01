@@ -167,6 +167,8 @@ struct ParticleData {
             phi_from_ptcls.mult(1./cell_vol_crse);
             amrex::Print() << "Initialized " << stochastic_particles->TotalNumberOfParticles() <<
                               " stochastic particles on level = 0." << std::endl;
+            // Recorrecting comp=0 using comp=1
+            amrex::MultiFab::Copy(phi_crse, phi_from_ptcls,0,0,1,phi_crse.nGrow());
         }
     }
 
