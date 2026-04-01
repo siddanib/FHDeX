@@ -353,10 +353,11 @@ AmrCoreAdv::InitData ()
 
 #ifdef AMREX_PARTICLES
         if (max_level > 0) {
-            particleData.init_particles((amrex::ParGDBBase*)GetParGDB(), grown_fba, phi_new[0], phi_new[1]);
+            particleData.init_particles((amrex::ParGDBBase*)GetParGDB(), grown_fba, phi_new[0], phi_new[1],
+                                        time);
         }
         else {
-            particleData.init_particles((amrex::ParGDBBase*)GetParGDB(), phi_new[0]);
+            particleData.init_particles((amrex::ParGDBBase*)GetParGDB(), phi_new[0], time);
         }
 #endif
         AverageDown();
@@ -531,7 +532,7 @@ AmrCoreAdv::RemakeLevel (int lev, Real time, const BoxArray& ba,
 
 #ifdef AMREX_PARTICLES
         if (lev == 1) {
-            particleData.regrid_particles(grown_fba, ba, old_fine_ba, phi_new[1]);
+            particleData.regrid_particles(grown_fba, ba, old_fine_ba, phi_new[1], time);
         }
 #endif
 }
@@ -598,7 +599,7 @@ void AmrCoreAdv::MakeNewLevelFromScratch (int lev, Real time, const BoxArray& ba
     ExternalPotential external_potential = m_external_potential;
 
     if (lev == 0) {
-        if (m_init_type == InitType::piecewise_x) {
+        if (m_init_type != InitType::uniform) {
             ValidateInitializationParameters();
         }
 
@@ -621,41 +622,168 @@ void AmrCoreAdv::MakeNewLevelFromScratch (int lev, Real time, const BoxArray& ba
             num_init_positions = static_cast<int>(m_init_positions.size());
         }
 
-        for (MFIter mfi(phi_new[lev]); mfi.isValid(); ++mfi)
-        {
-            const Box& vbx = mfi.validbox();
-            auto const& phi_arr = phi_new[lev].array(mfi);
-            auto npts_scale_local = npts_scale;
-            auto init_type = m_init_type;
-            amrex::ParallelFor(vbx,
-            [=] AMREX_GPU_DEVICE(int i, int j, int k)
+        if (m_init_type == InitType::external_potential_x) {
+            InitializeExternalPotentialXLevel0(phi_new[lev], time);
+        } else {
+            for (MFIter mfi(phi_new[lev]); mfi.isValid(); ++mfi)
             {
-                if (init_type == InitType::piecewise_x) {
-                    amrex::Real cellvol = dx[0]*dx[1];
+                const Box& vbx = mfi.validbox();
+                auto const& phi_arr = phi_new[lev].array(mfi);
+                auto npts_scale_local = npts_scale;
+                auto init_type = m_init_type;
+                amrex::ParallelFor(vbx,
+                [=] AMREX_GPU_DEVICE(int i, int j, int k)
+                {
+                    if (init_type == InitType::piecewise_x) {
+                        amrex::Real cellvol = dx[0]*dx[1];
 #if (AMREX_SPACEDIM > 2)
-                    cellvol *= dx[2];
+                        cellvol *= dx[2];
 #endif
-                    amrex::Real x = problo[0] + (static_cast<amrex::Real>(i) + amrex::Real(0.5)) * dx[0];
-                    int interval = num_init_positions;
-                    for (int n = 0; n < num_init_positions; ++n) {
-                        if (x < init_positions_ptr[n]) {
-                            interval = n;
-                            break;
+                        amrex::Real x = problo[0] + (static_cast<amrex::Real>(i) + amrex::Real(0.5)) * dx[0];
+                        int interval = num_init_positions;
+                        for (int n = 0; n < num_init_positions; ++n) {
+                            if (x < init_positions_ptr[n]) {
+                                interval = n;
+                                break;
+                            }
                         }
-                    }
 
-                    phi_arr(i,j,k,0) = init_particles_ptr[interval] / cellvol;
-                    if (Ncomp == 2) {
-                        phi_arr(i,j,k,1) = phi_arr(i,j,k,0);
+                        phi_arr(i,j,k,0) = init_particles_ptr[interval] / cellvol;
+                        if (Ncomp == 2) {
+                            phi_arr(i,j,k,1) = phi_arr(i,j,k,0);
+                        }
+                    } else {
+                        init_phi(i,j,k,phi_arr,dx,problo,npts_scale_local,Ncomp,
+                                 external_potential);
                     }
-                } else {
-                    init_phi(i,j,k,phi_arr,dx,problo,npts_scale_local,Ncomp,
-                             external_potential);
-                }
-            });
+                });
+            }
         }
     } else {
         phi_new[lev].ParallelCopy(phi_new[lev-1], 0, 0, phi_new[lev].nComp());
+    }
+}
+
+void
+AmrCoreAdv::InitializeExternalPotentialXLevel0 (amrex::MultiFab& phi, amrex::Real time)
+{
+    struct SelectedCellData {
+        amrex::Real weight = amrex::Real(0.0);
+        amrex::Real fractional = amrex::Real(0.0);
+        long long count = 0;
+    };
+
+    const auto prob_lo = Geom(0).ProbLoArray();
+    const auto dx = Geom(0).CellSizeArray();
+    const amrex::Real x_min = m_init_x_range[0];
+    const amrex::Real x_max = m_init_x_range[1];
+    const int ncomp = phi.nComp();
+    const long long total_particles = static_cast<long long>(std::llround(m_init_total_particles));
+    EnsembleDirection ens_dir{AMREX_D_DECL(m_ensemble_dir[0], m_ensemble_dir[1], m_ensemble_dir[2])};
+
+    amrex::Real cell_volume = dx[0];
+#if (AMREX_SPACEDIM > 1)
+    cell_volume *= dx[1];
+#endif
+#if (AMREX_SPACEDIM > 2)
+    cell_volume *= dx[2];
+#endif
+
+    amrex::Vector<SelectedCellData> selected_cells;
+    selected_cells.reserve(static_cast<std::size_t>(phi.boxArray().numPts()));
+    amrex::Real min_potential = std::numeric_limits<amrex::Real>::max();
+
+    for (MFIter mfi(phi); mfi.isValid(); ++mfi) {
+        const Box& vbx = mfi.validbox();
+        for (int k = vbx.smallEnd(2); k <= vbx.bigEnd(2); ++k) {
+            for (int j = vbx.smallEnd(1); j <= vbx.bigEnd(1); ++j) {
+                for (int i = vbx.smallEnd(0); i <= vbx.bigEnd(0); ++i) {
+                    const amrex::Real x = prob_lo[0]
+                        + (static_cast<amrex::Real>(i) + amrex::Real(0.5)) * dx[0];
+                    if (x < x_min || x > x_max) {
+                        continue;
+                    }
+
+                    const amrex::Real y = prob_lo[1]
+                        + (static_cast<amrex::Real>(j) + amrex::Real(0.5)) * dx[1];
+#if (AMREX_SPACEDIM > 2)
+                    const amrex::Real z = prob_lo[2]
+                        + (static_cast<amrex::Real>(k) + amrex::Real(0.5)) * dx[2];
+#else
+                    const amrex::Real z = amrex::Real(0.0);
+#endif
+                    const amrex::Real potential =
+                        external_potential_value(m_external_potential, ens_dir, time, x, y, z);
+                    min_potential = std::min(min_potential, potential);
+                    selected_cells.push_back(SelectedCellData{potential, amrex::Real(0.0), 0});
+                }
+            }
+        }
+    }
+
+    if (selected_cells.empty()) {
+        amrex::Abort("external_potential_x initialization selected zero level-0 cells.");
+    }
+
+    amrex::Real weight_sum = amrex::Real(0.0);
+    for (auto& cell : selected_cells) {
+        cell.weight = std::exp(amrex::Real(-2.0) * (cell.weight - min_potential));
+        weight_sum += cell.weight;
+    }
+
+    if (!(weight_sum > amrex::Real(0.0))) {
+        amrex::Abort("external_potential_x initialization produced zero total probability weight.");
+    }
+
+    long long assigned_particles = 0;
+    for (auto& cell : selected_cells) {
+        const amrex::Real expected = (cell.weight / weight_sum) * m_init_total_particles;
+        cell.count = static_cast<long long>(std::floor(expected));
+        cell.fractional = expected - static_cast<amrex::Real>(cell.count);
+        assigned_particles += cell.count;
+    }
+
+    const long long remainder = total_particles - assigned_particles;
+    if (remainder < 0 || remainder > static_cast<long long>(selected_cells.size())) {
+        amrex::Abort("external_potential_x initialization computed an invalid particle remainder.");
+    }
+
+    amrex::Vector<std::size_t> order(selected_cells.size());
+    for (std::size_t idx = 0; idx < order.size(); ++idx) {
+        order[idx] = idx;
+    }
+    std::stable_sort(order.begin(), order.end(),
+                     [&selected_cells] (std::size_t lhs, std::size_t rhs) {
+                         return selected_cells[lhs].fractional > selected_cells[rhs].fractional;
+                     });
+    for (long long idx = 0; idx < remainder; ++idx) {
+        selected_cells[order[static_cast<std::size_t>(idx)]].count += 1;
+    }
+
+    phi.setVal(amrex::Real(0.0));
+    std::size_t selected_idx = 0;
+    for (MFIter mfi(phi); mfi.isValid(); ++mfi) {
+        const Box& vbx = mfi.validbox();
+        auto const& phi_arr = phi.array(mfi);
+        for (int k = vbx.smallEnd(2); k <= vbx.bigEnd(2); ++k) {
+            for (int j = vbx.smallEnd(1); j <= vbx.bigEnd(1); ++j) {
+                for (int i = vbx.smallEnd(0); i <= vbx.bigEnd(0); ++i) {
+                    const amrex::Real x = prob_lo[0]
+                        + (static_cast<amrex::Real>(i) + amrex::Real(0.5)) * dx[0];
+                    if (x < x_min || x > x_max) {
+                        continue;
+                    }
+
+                    const amrex::Real density =
+                        static_cast<amrex::Real>(selected_cells[selected_idx].count) / cell_volume;
+                    phi_arr(i,j,k,0) = density;
+                    if (ncomp == 2) {
+                        phi_arr(i,j,k,1) = density;
+                    }
+                    ++selected_idx;
+                }
+            }
+        }
     }
 }
 
@@ -802,6 +930,8 @@ AmrCoreAdv::ReadParameters ( amrex::Vector<int>& bc_lo, amrex::Vector<int>& bc_h
         pp.query("init_type", m_init_type);
         pp.queryarr("init_positions", m_init_positions);
         pp.queryarr("init_particles_per_interval", m_init_particles_per_interval);
+        pp.queryarr("init_x_range", m_init_x_range);
+        pp.query("init_total_particles", m_init_total_particles);
 
         m_flux_mode = FluxMode::gaussian;
         pp.query("flux_mode", m_flux_mode);
@@ -947,6 +1077,37 @@ void
 AmrCoreAdv::ValidateInitializationParameters () const
 {
     if (m_init_type == InitType::uniform) {
+        return;
+    }
+
+    if (m_init_type == InitType::external_potential_x) {
+        if (!m_external_potential.enabled) {
+            amrex::Abort("external_potential_x initialization requires ext_pot.exists = 1.");
+        }
+        if (m_init_x_range.size() != 2) {
+            amrex::Abort("external_potential_x initialization requires init_x_range to contain exactly two entries.");
+        }
+
+        const amrex::Real x_min = m_init_x_range[0];
+        const amrex::Real x_max = m_init_x_range[1];
+        const amrex::Real prob_lo = Geom(0).ProbLo(0);
+        const amrex::Real prob_hi = Geom(0).ProbHi(0);
+        if (x_min >= x_max) {
+            amrex::Abort("external_potential_x initialization requires init_x_range[0] < init_x_range[1].");
+        }
+        if (x_min < prob_lo || x_max > prob_hi) {
+            amrex::Abort("external_potential_x initialization requires init_x_range to lie inside the level-0 x-domain.");
+        }
+        if (m_init_total_particles < amrex::Real(0.0)) {
+            amrex::Abort("external_potential_x initialization requires init_total_particles >= 0.");
+        }
+
+        const amrex::Real rounded_total = std::round(m_init_total_particles);
+        const amrex::Real tol = amrex::Real(1.e-12)
+            * std::max(amrex::Real(1.0), std::abs(m_init_total_particles));
+        if (std::abs(m_init_total_particles - rounded_total) > tol) {
+            amrex::Abort("external_potential_x initialization requires init_total_particles to be an integer value.");
+        }
         return;
     }
 
@@ -1374,11 +1535,11 @@ AmrCoreAdv::timeStepNoSubcycling (Real time, int iteration)
     const Real cell_vol = dx[0]*dx[1]*dx[2];
 #endif
     if (finest_level > 0) {
-        particleData.advance_particles(lev_for_particles, dt[lev_for_particles], cell_vol,
+        particleData.advance_particles(lev_for_particles, time, dt[lev_for_particles], cell_vol,
                                    phi_old[0], phi_new[0], phi_new[lev_for_particles]);
     }
     else {
-        particleData.advance_particles(lev_for_particles, dt[lev_for_particles],
+        particleData.advance_particles(lev_for_particles, time, dt[lev_for_particles],
                                        cell_vol, phi_new[lev_for_particles],
                                        istep[lev_for_particles]);
     }

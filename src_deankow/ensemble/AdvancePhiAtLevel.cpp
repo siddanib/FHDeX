@@ -6,7 +6,7 @@ using namespace amrex;
 
 // Advance a single level for a single time step, updates flux registers
 void
-AmrCoreAdv::AdvancePhiAtLevel (int lev, Real /*time*/, Real dt_lev, int /*iteration*/, int /*ncycle*/)
+AmrCoreAdv::AdvancePhiAtLevel (int lev, Real time, Real dt_lev, int /*iteration*/, int /*ncycle*/)
 {
     Array<MultiFab, AMREX_SPACEDIM> fluxes;
     Array<MultiFab, AMREX_SPACEDIM> stochFluxes;
@@ -65,7 +65,8 @@ AmrCoreAdv::AdvancePhiAtLevel (int lev, Real /*time*/, Real dt_lev, int /*iterat
         }
     }
 
-    advance_phi(phi_old[lev], phi_new[lev], fluxes, stochFluxes, dt_lev, npts_scale, geom[lev], bcs,
+    advance_phi(phi_old[lev], phi_new[lev], fluxes, stochFluxes, dt_lev,
+            time, npts_scale, geom[lev], bcs,
             m_ensemble_dir, m_external_potential,
             m_d_spde, (m_flux_mode == FluxMode::ml) ? &ml_ctx : nullptr);
 

@@ -56,6 +56,21 @@ ext_pot.exists = 0
 remove_particle_history = "false"
 remove_hist_freq        = 2
 
+# External-potential-x initialization example.
+# This initializes level-0 phi over the x-window `init_x_range` using
+# weights proportional to exp(-2 * (V(x,y) - min(V))) and assigns
+# `init_total_particles` particles across the selected cells.
+# To use this mode, enable the external potential below and switch
+# `init_type` to `external_potential_x`.
+# init_type = external_potential_x
+# init_x_range = 0.25 0.75
+# init_total_particles = 10000
+# ext_pot.exists = 1
+# ext_pot.type = quartic_2d
+# ext_pot.alpha = 1.0
+# ext_pot.beta = 1.0
+# ext_pot.gamma = 0.0
+#
 # Piecewise-x initialization example.
 # `init_positions` splits the x-domain into intervals and
 # `init_particles_per_interval` sets the particle count per interval.

@@ -187,6 +187,7 @@ void compute_flux_x (int i, int j, int k,
                      EnsembleDirection const& ensemble_dir,
                      AMREX_D_DECL(amrex::Real dxinv, amrex::Real dyinv,amrex::Real dzinv),
                      amrex::Real dt,
+                     amrex::Real time,
                      int lo, int hi, int dom_lo, int dom_hi, int bc_lo, int bc_hi,int Ncomp,
                      ExternalPotential const& external_potential,
                      amrex::Real a_d_spde,
@@ -287,7 +288,7 @@ void compute_flux_x (int i, int j, int k,
        // Note: External potential logic is incorrect for periodic boundaries
        fluxx(i,j,k,coeff_index) += phiavg *
            external_potential_gradient_component(external_potential,
-                                       ensemble_dir, 0, xloc, yloc);
+                                       ensemble_dir, 0, time, xloc, yloc);
     }
     // If the boundary is a wall flux has to be ZERO
     if (i == dom_lo && wall_lo) {
@@ -306,6 +307,7 @@ void compute_flux_x_quantized (int i, int j, int k,
                                EnsembleDirection const& ensemble_dir,
                                AMREX_D_DECL(amrex::Real dxinv, amrex::Real dyinv,amrex::Real dzinv),
                                amrex::Real dt,
+                               amrex::Real time,
                                int lo, int hi, int dom_lo, int dom_hi, int bc_lo, int bc_hi,int Ncomp,
                                ExternalPotential const& external_potential,
                                amrex::Real a_d_spde,
@@ -315,7 +317,7 @@ void compute_flux_x_quantized (int i, int j, int k,
     compute_flux_x(i, j, k, fluxx, stochfluxx, phi,
                    prob_lo,
                    ensemble_dir,
-                   AMREX_D_DECL(dxinv, dyinv, dzinv), dt,
+                   AMREX_D_DECL(dxinv, dyinv, dzinv), dt, time,
                    lo, hi, dom_lo, dom_hi, bc_lo, bc_hi, Ncomp,
                    external_potential, a_d_spde, flux_mode);
     // The flux returned has the units of m^-2s^-1. Convert this to number of particles  
@@ -343,6 +345,7 @@ void compute_flux_y (int i, int j, int k,
                      EnsembleDirection const& ensemble_dir,
                      AMREX_D_DECL(amrex::Real dxinv, amrex::Real dyinv,amrex::Real dzinv),
                      amrex::Real dt,
+                     amrex::Real time,
                      int lo, int hi, int dom_lo, int dom_hi, int bc_lo, int bc_hi, int Ncomp,
                      ExternalPotential const& external_potential,
                      amrex::Real a_d_spde,
@@ -410,7 +413,7 @@ void compute_flux_y (int i, int j, int k,
        amrex::Real phiavg = 0.5*(phip+phim);
        fluxy(i,j,k,coeff_index) += phiavg *
            external_potential_gradient_component(external_potential,
-                                        ensemble_dir, 1, xloc, yloc);
+                                        ensemble_dir, 1, time, xloc, yloc);
     }
     // If the boundary is a wall flux has to be ZERO
     if (j == dom_lo && wall_lo) {
@@ -429,6 +432,7 @@ void compute_flux_y_quantized (int i, int j, int k,
                                EnsembleDirection const& ensemble_dir,
                                AMREX_D_DECL(amrex::Real dxinv, amrex::Real dyinv,amrex::Real dzinv),
                                amrex::Real dt,
+                               amrex::Real time,
                                int lo, int hi, int dom_lo, int dom_hi, int bc_lo, int bc_hi, int Ncomp,
                                ExternalPotential const& external_potential,
                                amrex::Real a_d_spde,
@@ -438,7 +442,7 @@ void compute_flux_y_quantized (int i, int j, int k,
     compute_flux_y(i, j, k, fluxy, stochfluxy, phi,
                    prob_lo,
                    ensemble_dir,
-                   AMREX_D_DECL(dxinv, dyinv, dzinv), dt,
+                   AMREX_D_DECL(dxinv, dyinv, dzinv), dt, time,
                    lo, hi, dom_lo, dom_hi, bc_lo, bc_hi, Ncomp,
                    external_potential, a_d_spde, flux_mode);
     // The flux returned has the units of m^-2s^-1. Convert this to number of particles  
@@ -469,11 +473,13 @@ void compute_flux_z (int i, int j, int k,
                      EnsembleDirection const& ensemble_dir,
                      AMREX_D_DECL(amrex::Real dxinv, amrex::Real dyinv,amrex::Real dzinv),
                      amrex::Real dt,
+                     amrex::Real time,
                      int lo, int hi, int dom_lo, int dom_hi, int bc_lo, int bc_hi, int Ncomp,
                      ExternalPotential const& external_potential,
                      amrex::Real a_d_spde,
                      FluxMode flux_mode)
 {
+    amrex::ignore_unused(time);
     amrex::ignore_unused(prob_lo);
     amrex::ignore_unused(ensemble_dir);
     if (external_potential.enabled) {
@@ -545,6 +551,7 @@ void compute_flux_z_quantized (int i, int j, int k,
                                EnsembleDirection const& ensemble_dir,
                                AMREX_D_DECL(amrex::Real dxinv, amrex::Real dyinv,amrex::Real dzinv),
                                amrex::Real dt,
+                               amrex::Real time,
                                int lo, int hi, int dom_lo, int dom_hi, int bc_lo, int bc_hi, int Ncomp,
                                ExternalPotential const& external_potential,
                                amrex::Real a_d_spde,
@@ -554,7 +561,7 @@ void compute_flux_z_quantized (int i, int j, int k,
     compute_flux_z(i, j, k, fluxz, stochfluxz, phi,
                    prob_lo,
                    ensemble_dir,
-                   AMREX_D_DECL(dxinv, dyinv, dzinv), dt,
+                   AMREX_D_DECL(dxinv, dyinv, dzinv), dt, time,
                    lo, hi, dom_lo, dom_hi, bc_lo, bc_hi, Ncomp,
                    external_potential, a_d_spde, flux_mode);
     // The flux returned has the units of m^-2s^-1. Convert this to number of particles  

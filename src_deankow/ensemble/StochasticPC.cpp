@@ -10,6 +10,7 @@ void
 StochasticPC::InitParticles (MultiFab& phi_fine,
                              ExternalPotential const& external_potential,
                              Vector<int> const& ensemble_dir,
+                             Real time,
                              const int lev)
 {
     amrex::Print() << "calling InitParrticles" << std::endl;
@@ -18,7 +19,7 @@ StochasticPC::InitParticles (MultiFab& phi_fine,
         factor = amrex::Real(1.);
     }
     AddParticles(phi_fine, BoxArray{},factor,
-                 external_potential, ensemble_dir, lev);
+                 external_potential, ensemble_dir, time, lev);
 }
 
 void
@@ -58,6 +59,7 @@ StochasticPC::AddParticles (MultiFab& phi_fine, const BoxArray& ba_to_exclude,
                             amrex::Real factor,
                             ExternalPotential const& external_potential,
                             Vector<int> const& ensemble_dir,
+                            Real time,
                             const int lev)
 {
     BL_PROFILE("StochasticPC::AddParticles");
@@ -177,14 +179,14 @@ StochasticPC::AddParticles (MultiFab& phi_fine, const BoxArray& ba_to_exclude,
                     Real ym = plo[1] + j*dx[1];
                     Real yp = ym + dx[1];
                     Real vpx = external_potential_value(external_potential,
-                                   ens_flag, xp, amrex::Real(0.5)*(ym+yp));
+                                   ens_flag, time, xp, amrex::Real(0.5)*(ym+yp));
                     Real vmx = external_potential_value(external_potential,
-                                   ens_flag, xm, amrex::Real(0.5)*(ym+yp));
+                                   ens_flag, time, xm, amrex::Real(0.5)*(ym+yp));
 
                     Real vpy = external_potential_value(external_potential,
-                                   ens_flag, amrex::Real(0.5)*(xm+xp), yp);
+                                   ens_flag, time, amrex::Real(0.5)*(xm+xp), yp);
                     Real vmy = external_potential_value(external_potential,
-                                   ens_flag, amrex::Real(0.5)*(xm+xp), ym);
+                                   ens_flag, time, amrex::Real(0.5)*(xm+xp), ym);
                     
                     Real vsubx = (vpx - vmx)/dx[0];
                     Real vsuby = (vpy - vmy)/dx[1];
@@ -365,7 +367,7 @@ StochasticPC::RefluxCrseToFine (const BoxArray& ba_to_keep, MultiFab& phi_for_re
 }
 
 void
-StochasticPC::AdvectWithRandomWalk (int lev, Real dt,
+StochasticPC::AdvectWithRandomWalk (int lev, Real dt, Real time,
                                     ExternalPotential const& external_potential,
                                     Vector<int>& a_ensemble_dir)
 {
@@ -407,9 +409,9 @@ StochasticPC::AdvectWithRandomWalk (int lev, Real dt,
                 amrex::Real yloc = p.pos(1);
 
                 p.pos(0) += -dt * external_potential_gradient_component(
-                    external_potential, ens_flag, 0, xloc, yloc);
+                    external_potential, ens_flag, 0, time, xloc, yloc);
                 p.pos(1) += -dt * external_potential_gradient_component(
-                    external_potential, ens_flag, 1, xloc, yloc);
+                    external_potential, ens_flag, 1, time, xloc, yloc);
              }
 
             AMREX_D_TERM( incx = std::max(-dx[0], std::min( dx[0], incx));,

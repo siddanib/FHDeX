@@ -51,10 +51,12 @@ inline ExternalPotentialType ExternalPotentialTypeFromString (std::string const&
 AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE
 amrex::Real external_potential_value (ExternalPotential const& pot,
                                       EnsembleDirection const& ensemble_dir,
+                                      amrex::Real time,
                                       amrex::Real x,
                                       amrex::Real y,
                                       amrex::Real z = amrex::Real(0.0)) noexcept
 {
+    amrex::ignore_unused(time);
     amrex::ignore_unused(z);
 
     if (!pot.enabled || pot.type == ExternalPotentialType::none) {
@@ -83,10 +85,12 @@ AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE
 amrex::Real external_potential_gradient_component (ExternalPotential const& pot,
                                                    EnsembleDirection const& ensemble_dir,
                                                    int dir,
+                                                   amrex::Real time,
                                                    amrex::Real x,
                                                    amrex::Real y,
                                                    amrex::Real z = amrex::Real(0.0)) noexcept
 {
+    amrex::ignore_unused(time);
     amrex::ignore_unused(z);
 
     if (!pot.enabled || pot.type == ExternalPotentialType::none) {

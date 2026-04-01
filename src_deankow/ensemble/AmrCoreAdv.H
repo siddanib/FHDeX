@@ -28,7 +28,8 @@ class Module;
 
 AMREX_ENUM(InitType,
     uniform,
-    piecewise_x
+    piecewise_x,
+    external_potential_x
 );
 
 class AmrCoreAdv
@@ -147,6 +148,7 @@ private:
                              const amrex::DistributionMapping& dm);
     void UpdateMLPhiHistory (int lev);
     void ValidateInitializationParameters () const;
+    void InitializeExternalPotentialXLevel0 (amrex::MultiFab& phi, amrex::Real time);
     void InitDiagnostics ();
     void ValidateDiagnosticsMode () const;
     void ConfigureParticleDiagnostics ();
@@ -211,6 +213,8 @@ private:
     InitType m_init_type = InitType::uniform;
     amrex::Vector<amrex::Real> m_init_positions;
     amrex::Vector<amrex::Real> m_init_particles_per_interval;
+    amrex::Vector<amrex::Real> m_init_x_range;
+    amrex::Real m_init_total_particles = amrex::Real(0.0);
 
     // ML flux configuration
     FluxMode m_flux_mode = FluxMode::gaussian;

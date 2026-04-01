@@ -61,7 +61,8 @@ struct ParticleData {
     }
 
     void init_particles(amrex::ParGDBBase* a_gdb, const amrex::BoxArray& grown_fba,
-                        amrex::MultiFab& phi_crse, amrex::MultiFab& phi_fine)
+                        amrex::MultiFab& phi_crse, amrex::MultiFab& phi_fine,
+                        amrex::Real time)
     {
         // Initialize stochastic particles and phi at level 1
         if (use_particles && multilevel_run) {
@@ -93,7 +94,7 @@ struct ParticleData {
             // Use this grown boxArray to hold the particles
             // **********************************************************************
             stochastic_particles->InitParticles(phi_grown, m_external_potential,
-                                                m_ensemble_dir);
+                                                m_ensemble_dir, time);
 
             amrex::Print() << "Before Removal we have  " << stochastic_particles->TotalNumberOfParticles() <<
                               " stochastic particles." << std::endl;
@@ -124,7 +125,8 @@ struct ParticleData {
     // This version initializes particles at level 0
     // Particles are created using comp_id = 0 of phi_crse,
     // but comp_id = 1 is again reset based on the initialized particles
-    void init_particles(amrex::ParGDBBase* a_gdb, amrex::MultiFab& phi_crse)
+    void init_particles(amrex::ParGDBBase* a_gdb, amrex::MultiFab& phi_crse,
+                        amrex::Real time)
     {
         const int lev = 0;
         // The component of phi_crse that will be modified based on Particles
@@ -146,7 +148,7 @@ struct ParticleData {
             // Use phi_crse to hold the particles
             // **********************************************************************
             stochastic_particles->InitParticles(phi_crse, m_external_potential,
-                                                m_ensemble_dir, lev);
+                                                m_ensemble_dir, time, lev);
             // **********************************************************************
             // Redistribute so every particle is in the "correct" place
             // **********************************************************************
@@ -169,7 +171,8 @@ struct ParticleData {
     }
 
     void regrid_particles(const amrex::BoxArray& new_fine_ba, const amrex::BoxArray& new_ungrown_ba,
-                          const amrex::BoxArray& old_fine_ba, amrex::MultiFab& phi_fine)
+                          const amrex::BoxArray& old_fine_ba, amrex::MultiFab& phi_fine,
+                          amrex::Real time)
     {
         amrex::DistributionMapping new_ungrown_dm { new_ungrown_ba, amrex::ParallelDescriptor::NProcs() };
         stochastic_particles->SetParticleBoxArray(1, new_ungrown_ba);
@@ -179,7 +182,7 @@ struct ParticleData {
         stochastic_particles->RemoveParticlesAtLevel(0);
         amrex::Real factor = m_factor;
         stochastic_particles->AddParticles(phi_fine, old_fine_ba, factor,
-                                           m_external_potential, m_ensemble_dir);
+                                           m_external_potential, m_ensemble_dir, time);
         phi_fine.setVal(amrex::Real(0.0));
         const int lev = 1;
         const auto dx = stochastic_particles->Geom(lev).CellSizeArray();
@@ -352,7 +355,7 @@ struct ParticleData {
         return m_particle_face_flux_profile;
     }
 
-    void advance_particles(int lev, amrex::Real dt_lev, amrex::Real cell_vol,
+    void advance_particles(int lev, amrex::Real time, amrex::Real dt_lev, amrex::Real cell_vol,
                            amrex::MultiFab& phi_crse_old,
                            amrex::MultiFab& phi_crse_new,
                            amrex::MultiFab& phi_fine)
@@ -381,13 +384,13 @@ struct ParticleData {
 
             amrex::Real factor = m_factor;
             stochastic_particles->AddParticles(phi_grown, ba_to_exclude, factor,
-                                               m_external_potential, m_ensemble_dir);
+                                               m_external_potential, m_ensemble_dir, time);
 
             // **********************************************************************
             // Advect the particles in the valid region and in the ghost region
             // **********************************************************************
             BeginFaceFluxDiagnostics(lev, dt_lev);
-            stochastic_particles->AdvectWithRandomWalk(lev, dt_lev,
+            stochastic_particles->AdvectWithRandomWalk(lev, dt_lev, time,
                                         m_external_potential, m_ensemble_dir);
             EndFaceFluxDiagnostics(lev, dt_lev);
 
@@ -460,7 +463,7 @@ struct ParticleData {
         }
     }
 
-    void advance_particles(int lev, amrex::Real dt_lev, amrex::Real cell_vol,
+    void advance_particles(int lev, amrex::Real time, amrex::Real dt_lev, amrex::Real cell_vol,
                            amrex::MultiFab& phi_crse_new, int a_istep)
     {
         // The component of phi_crse_new that will be modified based on Particles
@@ -485,7 +488,7 @@ struct ParticleData {
                 stochastic_particles->RemoveParticlesAtLevel(lev);
                 // Add them again based on phi_crse_old
                 stochastic_particles->InitParticles(phi_crse_old, m_external_potential,
-                                                    m_ensemble_dir, lev);
+                                                    m_ensemble_dir, time, lev);
                 // **********************************************************************
                 // Redistribute so every particle is in the "correct" place
                 // **********************************************************************
@@ -500,7 +503,7 @@ struct ParticleData {
             // Advect the particles in the valid region and in the ghost region
             // **********************************************************************
             BeginFaceFluxDiagnostics(lev, dt_lev);
-            stochastic_particles->AdvectWithRandomWalk(lev, dt_lev,
+            stochastic_particles->AdvectWithRandomWalk(lev, dt_lev, time,
                                         m_external_potential, m_ensemble_dir);
             EndFaceFluxDiagnostics(lev, dt_lev);
             // **********************************************************************

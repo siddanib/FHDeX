@@ -72,16 +72,18 @@ public:
     void InitParticles (amrex::MultiFab& phi_fine,
                         ExternalPotential const& external_potential,
                         amrex::Vector<int> const& ensemble_dir,
+                        amrex::Real time,
                         const int lev = 1);
     void AddParticles  (amrex::MultiFab& phi_fine, const amrex::BoxArray& ba_to_exclude,
                         amrex::Real factor,
                         ExternalPotential const& external_potential,
                         amrex::Vector<int> const& ensemble_dir,
+                        amrex::Real time,
                         const int lev = 1);
 
     void ColorParticlesWithPhi (amrex::MultiFab const& phi_fine);
 
-    void AdvectWithRandomWalk (int lev, amrex::Real dt,
+    void AdvectWithRandomWalk (int lev, amrex::Real dt, amrex::Real time,
                                ExternalPotential const& external_potential,
                                amrex::Vector<int>& a_ensemble_dir);
 
