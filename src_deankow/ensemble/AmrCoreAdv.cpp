@@ -811,32 +811,42 @@ AmrCoreAdv::InitializeExternalPotentialXLevel0 (amrex::MultiFab& phi, amrex::Rea
     }
 
     phi.setVal(amrex::Real(0.0));
+    const ExternalPotential external_potential = m_external_potential;
+    const amrex::Real total_particles = m_init_total_particles;
+    const amrex::Real min_potential_local = min_potential;
+    const amrex::Real weight_sum_local = weight_sum;
+    const bool use_overlap_selection_local = use_overlap_selection;
     for (MFIter mfi(phi); mfi.isValid(); ++mfi) {
         const Box& vbx = mfi.validbox();
         auto const& phi_arr = phi.array(mfi);
-        for (int j = vbx.smallEnd(1); j <= vbx.bigEnd(1); ++j) {
-            for (int i = vbx.smallEnd(0); i <= vbx.bigEnd(0); ++i) {
-                if (!cell_is_selected(i)) {
-                    continue;
-                }
-
-                const amrex::Real x = prob_lo[0]
-                    + (static_cast<amrex::Real>(i) + amrex::Real(0.5)) * dx[0];
-                const amrex::Real y = prob_lo[1]
-                    + (static_cast<amrex::Real>(j) + amrex::Real(0.5)) * dx[1];
-                const amrex::Real potential =
-                    external_potential_value(m_external_potential, ens_dir, time, x, y);
-                const amrex::Real weight =
-                    std::exp(amrex::Real(-2.0) * (potential - min_potential));
-                const amrex::Real density =
-                    m_init_total_particles * weight
-                    / (weight_sum * cell_volume);
-                phi_arr(i,j,0,0) = density;
-                if (ncomp == 2) {
-                    phi_arr(i,j,0,1) = density;
-                }
+        amrex::ParallelFor(vbx, [=] AMREX_GPU_DEVICE (int i, int j, int k) noexcept
+        {
+            const amrex::Real center_x = prob_lo[0]
+                + (static_cast<amrex::Real>(i) + amrex::Real(0.5)) * dx[0];
+            bool cell_selected = center_x >= x_min && center_x <= x_max;
+            if (use_overlap_selection_local) {
+                const amrex::Real cell_lo = prob_lo[0] + static_cast<amrex::Real>(i) * dx[0];
+                const amrex::Real cell_hi = cell_lo + dx[0];
+                cell_selected = cell_hi > x_min && cell_lo < x_max;
             }
-        }
+            if (!cell_selected) {
+                return;
+            }
+
+            const amrex::Real x = center_x;
+            const amrex::Real y = prob_lo[1]
+                + (static_cast<amrex::Real>(j) + amrex::Real(0.5)) * dx[1];
+            const amrex::Real potential =
+                external_potential_value(external_potential, ens_dir, time, x, y);
+            const amrex::Real weight =
+                std::exp(amrex::Real(-2.0) * (potential - min_potential_local));
+            const amrex::Real density =
+                total_particles * weight / (weight_sum_local * cell_volume);
+            phi_arr(i,j,k,0) = density;
+            if (ncomp == 2) {
+                phi_arr(i,j,k,1) = density;
+            }
+        });
     }
 #endif
 }
