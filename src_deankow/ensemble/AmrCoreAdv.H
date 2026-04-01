@@ -148,11 +148,11 @@ private:
                              const amrex::DistributionMapping& dm);
     void UpdateMLPhiHistory (int lev);
     void ValidateInitializationParameters () const;
-    void InitializeExternalPotentialXLevel0 (amrex::MultiFab& phi, amrex::Real time);
     void InitDiagnostics ();
     void ValidateDiagnosticsMode () const;
     void ConfigureParticleDiagnostics ();
 public:
+    void InitializeExternalPotentialXLevel0 (amrex::MultiFab& phi, amrex::Real time);
     void CaptureSPDEFaceFluxProfile (int lev, amrex::Array<amrex::MultiFab, AMREX_SPACEDIM> const& fluxes);
     void ComputeReducedDensities (int lev);
 private:
