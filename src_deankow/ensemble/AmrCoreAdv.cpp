@@ -669,6 +669,7 @@ AmrCoreAdv::InitializeExternalPotentialXLevel0 (amrex::MultiFab& phi, amrex::Rea
 {
     const auto prob_lo = Geom(0).ProbLoArray();
     const auto dx = Geom(0).CellSizeArray();
+    const Box& domain = Geom(0).Domain();
     const amrex::Real x_min = m_init_x_range[0];
     const amrex::Real x_max = m_init_x_range[1];
     const int ncomp = phi.nComp();
@@ -685,40 +686,77 @@ AmrCoreAdv::InitializeExternalPotentialXLevel0 (amrex::MultiFab& phi, amrex::Rea
     const BoxArray& ba = phi.boxArray();
     amrex::Long num_selected_cells = 0;
     amrex::Real min_potential = std::numeric_limits<amrex::Real>::max();
+    bool use_overlap_selection = false;
 
-    // Traverse the global BoxArray so initialization is independent of the
-    // current DistributionMapping.
-    for (int bi = 0; bi < ba.size(); ++bi) {
-        const Box& vbx = ba[bi];
-        for (int k = vbx.smallEnd(2); k <= vbx.bigEnd(2); ++k) {
-            for (int j = vbx.smallEnd(1); j <= vbx.bigEnd(1); ++j) {
-                for (int i = vbx.smallEnd(0); i <= vbx.bigEnd(0); ++i) {
-                    const amrex::Real x = prob_lo[0]
-                        + (static_cast<amrex::Real>(i) + amrex::Real(0.5)) * dx[0];
-                    if (x < x_min || x > x_max) {
-                        continue;
-                    }
+    auto cell_is_selected = [&] (int i) noexcept
+    {
+        const amrex::Real center_x = prob_lo[0]
+            + (static_cast<amrex::Real>(i) + amrex::Real(0.5)) * dx[0];
+        if (!use_overlap_selection) {
+            return center_x >= x_min && center_x <= x_max;
+        }
 
-                    const amrex::Real y = prob_lo[1]
-                        + (static_cast<amrex::Real>(j) + amrex::Real(0.5)) * dx[1];
+        const amrex::Real cell_lo = prob_lo[0] + static_cast<amrex::Real>(i) * dx[0];
+        const amrex::Real cell_hi = cell_lo + dx[0];
+        return cell_hi > x_min && cell_lo < x_max;
+    };
+
+    auto accumulate_selected_cells = [&] ()
+    {
+        num_selected_cells = 0;
+        min_potential = std::numeric_limits<amrex::Real>::max();
+
+        // Traverse the global BoxArray so initialization is independent of the
+        // current DistributionMapping.
+        for (int bi = 0; bi < ba.size(); ++bi) {
+            const Box& vbx = ba[bi];
+            for (int k = vbx.smallEnd(2); k <= vbx.bigEnd(2); ++k) {
+                for (int j = vbx.smallEnd(1); j <= vbx.bigEnd(1); ++j) {
+                    for (int i = vbx.smallEnd(0); i <= vbx.bigEnd(0); ++i) {
+                        if (!cell_is_selected(i)) {
+                            continue;
+                        }
+
+                        const amrex::Real x = prob_lo[0]
+                            + (static_cast<amrex::Real>(i) + amrex::Real(0.5)) * dx[0];
+                        const amrex::Real y = prob_lo[1]
+                            + (static_cast<amrex::Real>(j) + amrex::Real(0.5)) * dx[1];
 #if (AMREX_SPACEDIM > 2)
-                    const amrex::Real z = prob_lo[2]
-                        + (static_cast<amrex::Real>(k) + amrex::Real(0.5)) * dx[2];
+                        const amrex::Real z = prob_lo[2]
+                            + (static_cast<amrex::Real>(k) + amrex::Real(0.5)) * dx[2];
 #else
-                    const amrex::Real z = amrex::Real(0.0);
+                        const amrex::Real z = amrex::Real(0.0);
 #endif
-                    const amrex::Real potential =
-                        external_potential_value(m_external_potential, ens_dir, time, x, y, z);
-                    min_potential = std::min(min_potential, potential);
-                    ++num_selected_cells;
+                        const amrex::Real potential =
+                            external_potential_value(m_external_potential, ens_dir, time, x, y, z);
+                        min_potential = std::min(min_potential, potential);
+                        ++num_selected_cells;
+                    }
                 }
             }
         }
+    };
+
+    accumulate_selected_cells();
+    if (num_selected_cells == 0) {
+        use_overlap_selection = true;
+        accumulate_selected_cells();
     }
 
     if (num_selected_cells == 0) {
-        amrex::Abort("external_potential_x initialization selected zero level-0 cells.");
+        std::ostringstream oss;
+        oss << "external_potential_x initialization selected zero level-0 cells. "
+            << "init_x_range=[" << x_min << ", " << x_max << "], "
+            << "geom_prob_x=[" << Geom(0).ProbLo(0) << ", " << Geom(0).ProbHi(0) << "], "
+            << "dx=" << dx[0] << ", "
+            << "domain_i=[" << domain.smallEnd(0) << ", " << domain.bigEnd(0) << "], "
+            << "first_center="
+            << (prob_lo[0] + (static_cast<amrex::Real>(domain.smallEnd(0)) + amrex::Real(0.5)) * dx[0])
+            << ", last_center="
+            << (prob_lo[0] + (static_cast<amrex::Real>(domain.bigEnd(0)) + amrex::Real(0.5)) * dx[0]);
+        amrex::Abort(oss.str());
     }
+    amrex::ParallelDescriptor::ReduceRealMin(min_potential);
 
     amrex::Real weight_sum = amrex::Real(0.0);
     for (int bi = 0; bi < ba.size(); ++bi) {
@@ -726,12 +764,12 @@ AmrCoreAdv::InitializeExternalPotentialXLevel0 (amrex::MultiFab& phi, amrex::Rea
         for (int k = vbx.smallEnd(2); k <= vbx.bigEnd(2); ++k) {
             for (int j = vbx.smallEnd(1); j <= vbx.bigEnd(1); ++j) {
                 for (int i = vbx.smallEnd(0); i <= vbx.bigEnd(0); ++i) {
-                    const amrex::Real x = prob_lo[0]
-                        + (static_cast<amrex::Real>(i) + amrex::Real(0.5)) * dx[0];
-                    if (x < x_min || x > x_max) {
+                    if (!cell_is_selected(i)) {
                         continue;
                     }
 
+                    const amrex::Real x = prob_lo[0]
+                        + (static_cast<amrex::Real>(i) + amrex::Real(0.5)) * dx[0];
                     const amrex::Real y = prob_lo[1]
                         + (static_cast<amrex::Real>(j) + amrex::Real(0.5)) * dx[1];
 #if (AMREX_SPACEDIM > 2)
@@ -759,12 +797,12 @@ AmrCoreAdv::InitializeExternalPotentialXLevel0 (amrex::MultiFab& phi, amrex::Rea
         for (int k = vbx.smallEnd(2); k <= vbx.bigEnd(2); ++k) {
             for (int j = vbx.smallEnd(1); j <= vbx.bigEnd(1); ++j) {
                 for (int i = vbx.smallEnd(0); i <= vbx.bigEnd(0); ++i) {
-                    const amrex::Real x = prob_lo[0]
-                        + (static_cast<amrex::Real>(i) + amrex::Real(0.5)) * dx[0];
-                    if (x < x_min || x > x_max) {
+                    if (!cell_is_selected(i)) {
                         continue;
                     }
 
+                    const amrex::Real x = prob_lo[0]
+                        + (static_cast<amrex::Real>(i) + amrex::Real(0.5)) * dx[0];
                     const amrex::Real y = prob_lo[1]
                         + (static_cast<amrex::Real>(j) + amrex::Real(0.5)) * dx[1];
 #if (AMREX_SPACEDIM > 2)
