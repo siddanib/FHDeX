@@ -689,6 +689,9 @@ AmrCoreAdv::InitializeExternalPotentialXLevel0 (amrex::MultiFab& phi, amrex::Rea
     amrex::Vector<SelectedCellData> selected_cells;
     selected_cells.reserve(static_cast<std::size_t>(phi.boxArray().numPts()));
     amrex::Real min_potential = std::numeric_limits<amrex::Real>::max();
+    amrex::Real local_first_center = std::numeric_limits<amrex::Real>::max();
+    amrex::Real local_last_center = -std::numeric_limits<amrex::Real>::max();
+    bool saw_local_cell = false;
 
     for (MFIter mfi(phi); mfi.isValid(); ++mfi) {
         const Box& vbx = mfi.validbox();
@@ -697,6 +700,11 @@ AmrCoreAdv::InitializeExternalPotentialXLevel0 (amrex::MultiFab& phi, amrex::Rea
                 for (int i = vbx.smallEnd(0); i <= vbx.bigEnd(0); ++i) {
                     const amrex::Real x = prob_lo[0]
                         + (static_cast<amrex::Real>(i) + amrex::Real(0.5)) * dx[0];
+                    if (!saw_local_cell) {
+                        local_first_center = x;
+                        saw_local_cell = true;
+                    }
+                    local_last_center = x;
                     if (x < x_min || x > x_max) {
                         continue;
                     }
@@ -721,6 +729,20 @@ AmrCoreAdv::InitializeExternalPotentialXLevel0 (amrex::MultiFab& phi, amrex::Rea
     amrex::Long num_selected_cells = static_cast<amrex::Long>(selected_cells.size());
     amrex::ParallelDescriptor::ReduceLongSum(num_selected_cells);
     if (num_selected_cells == 0) {
+        amrex::AllPrint()
+            << "external_potential_x debug: rank=" << amrex::ParallelDescriptor::MyProc()
+            << " local_selected_cells=" << selected_cells.size()
+            << " global_selected_cells=" << num_selected_cells
+            << " init_x_range=[" << x_min << ", " << x_max << "]"
+            << " geom_prob_x=[" << Geom(0).ProbLo(0) << ", " << Geom(0).ProbHi(0) << "]"
+            << " dx=" << dx[0]
+            << " local_valid_x_centers=[";
+        if (saw_local_cell) {
+            amrex::AllPrint() << local_first_center << ", " << local_last_center;
+        } else {
+            amrex::AllPrint() << "none";
+        }
+        amrex::AllPrint() << "]\n";
         amrex::Abort("external_potential_x initialization selected zero level-0 cells.");
     }
 
