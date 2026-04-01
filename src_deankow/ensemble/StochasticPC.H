@@ -4,6 +4,8 @@
 #include <AMReX_Math.H>
 #include <AMReX_Particles.H>
 
+#include <ExternalPotential.H>
+
 struct RealIdx
 {
     enum {
@@ -67,19 +69,20 @@ public:
                                    amrex::DefaultAllocator>(geom, dmap, ba)
         {}
 
-    void InitParticles (amrex::MultiFab& phi_fine, int a_ext_pot,
-                        amrex::Real a_alpha, amrex::Real a_beta,
-                        amrex::Real a_gamma, const int lev = 1);
+    void InitParticles (amrex::MultiFab& phi_fine,
+                        ExternalPotential const& external_potential,
+                        amrex::Vector<int> const& ensemble_dir,
+                        const int lev = 1);
     void AddParticles  (amrex::MultiFab& phi_fine, const amrex::BoxArray& ba_to_exclude,
-                        amrex::Real factor, int a_ext_pot, amrex::Real a_alpha,
-                        amrex::Real a_beta, amrex::Real a_gamma,
+                        amrex::Real factor,
+                        ExternalPotential const& external_potential,
+                        amrex::Vector<int> const& ensemble_dir,
                         const int lev = 1);
 
     void ColorParticlesWithPhi (amrex::MultiFab const& phi_fine);
 
-    void AdvectWithRandomWalk (int lev, amrex::Real dt, int a_ext_pot,
-                               amrex::Real a_alpha, amrex::Real a_beta,
-                               amrex::Real a_gamma,
+    void AdvectWithRandomWalk (int lev, amrex::Real dt,
+                               ExternalPotential const& external_potential,
                                amrex::Vector<int>& a_ensemble_dir);
 
     void RemoveParticlesNotInBA (const amrex::BoxArray& ba_to_keep,

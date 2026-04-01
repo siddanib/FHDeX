@@ -66,7 +66,7 @@ AmrCoreAdv::AdvancePhiAtLevel (int lev, Real /*time*/, Real dt_lev, int /*iterat
     }
 
     advance_phi(phi_old[lev], phi_new[lev], fluxes, stochFluxes, dt_lev, npts_scale, geom[lev], bcs,
-            m_ensemble_dir, m_ext_pot, m_ext_pot_alpha, m_ext_pot_beta, m_ext_pot_gamma,
+            m_ensemble_dir, m_external_potential,
             m_d_spde, (m_flux_mode == FluxMode::ml) ? &ml_ctx : nullptr);
 
     CaptureSPDEFaceFluxProfile(lev, fluxes);

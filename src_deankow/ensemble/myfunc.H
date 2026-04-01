@@ -5,6 +5,7 @@
 #include <AMReX_MultiFab.H>
 #include <AMReX_BCRec.H>
 
+#include <ExternalPotential.H>
 #include <FluxMode.H>
 
 using namespace amrex;
@@ -48,8 +49,8 @@ void advance_phi (amrex::MultiFab& phi_old,
                   amrex::Geometry const& geom,
                   Vector<amrex::BCRec> const& BoundaryCondition,
                   Vector<int> const& a_ensemble_dir,
-                  int a_ext_pot, Real a_alpha, Real a_beta,
-                  Real a_gamma, Real a_d_spde,
+                  ExternalPotential const& external_potential,
+                  Real a_d_spde,
                   MLFluxContext const* ml_ctx);
 
 #endif

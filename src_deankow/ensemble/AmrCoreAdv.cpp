@@ -595,11 +595,7 @@ void AmrCoreAdv::MakeNewLevelFromScratch (int lev, Real time, const BoxArray& ba
 
     int Ncomp = phi_new[lev].nComp();
 
-    // External Potential related
-    int a_ext_pot = m_ext_pot;
-    Real a_alpha  = m_ext_pot_alpha;
-    Real a_beta   = m_ext_pot_beta;
-    Real a_gamma  = m_ext_pot_gamma;
+    ExternalPotential external_potential = m_external_potential;
 
     if (lev == 0) {
         if (m_init_type == InitType::piecewise_x) {
@@ -654,7 +650,7 @@ void AmrCoreAdv::MakeNewLevelFromScratch (int lev, Real time, const BoxArray& ba
                     }
                 } else {
                     init_phi(i,j,k,phi_arr,dx,problo,npts_scale_local,Ncomp,
-                             a_ext_pot, a_alpha, a_beta, a_gamma);
+                             external_potential);
                 }
             });
         }
@@ -914,14 +910,22 @@ AmrCoreAdv::ReadParameters ( amrex::Vector<int>& bc_lo, amrex::Vector<int>& bc_h
     {
         ParmParse pp("ext_pot");
 
-        pp.query("exists", m_ext_pot);
-        if (m_ext_pot) {
+        pp.query("exists", m_external_potential.enabled);
+        if (m_external_potential.enabled) {
             if (AMREX_SPACEDIM != 2) {
                 amrex::Abort("External Potential is coded for 2D.\n");
             }
-            pp.get("alpha", m_ext_pot_alpha);
-            pp.get("beta", m_ext_pot_beta);
-            pp.get("gamma", m_ext_pot_gamma);
+            std::string potential_type = "quartic_2d";
+            pp.query("type", potential_type);
+            m_external_potential.type = ExternalPotentialTypeFromString(potential_type);
+            if (m_external_potential.type != ExternalPotentialType::quartic_2d) {
+                amrex::Abort("Unsupported ext_pot.type: " + potential_type);
+            }
+            pp.get("alpha", m_external_potential.alpha);
+            pp.get("beta", m_external_potential.beta);
+            pp.get("gamma", m_external_potential.gamma);
+        } else {
+            m_external_potential.type = ExternalPotentialType::none;
         }
     }
 
@@ -934,7 +938,8 @@ AmrCoreAdv::ReadParameters ( amrex::Vector<int>& bc_lo, amrex::Vector<int>& bc_h
             AMREX_ALWAYS_ASSERT_WITH_MESSAGE(alg_type != 0,
                 "Ensemble mode with particles requires alg_type != 0, i.e., ncomp = 2");
         }
-        particleData.init_particle_params(max_level, a_ensemble_dir_exists);
+        particleData.init_particle_params(max_level, a_ensemble_dir_exists,
+                                          m_external_potential);
 #endif
 }
 

@@ -7,14 +7,18 @@
 using namespace amrex;
 
 void
-StochasticPC::InitParticles (MultiFab& phi_fine, int a_ext_pot,
-                             Real a_alpha, Real a_beta,
-                             Real a_gamma, const int lev)
+StochasticPC::InitParticles (MultiFab& phi_fine,
+                             ExternalPotential const& external_potential,
+                             Vector<int> const& ensemble_dir,
+                             const int lev)
 {
     amrex::Print() << "calling InitParrticles" << std::endl;
     amrex::Real factor = amrex::Real(-1.);
+    if (external_potential.enabled) {
+        factor = amrex::Real(1.);
+    }
     AddParticles(phi_fine, BoxArray{},factor,
-                 a_ext_pot, a_alpha, a_beta, a_gamma, lev);
+                 external_potential, ensemble_dir, lev);
 }
 
 void
@@ -51,14 +55,17 @@ StochasticPC::ColorParticlesWithPhi (MultiFab const& phi)
 
 void
 StochasticPC::AddParticles (MultiFab& phi_fine, const BoxArray& ba_to_exclude,
-                            amrex::Real factor, int a_ext_pot,
-                            Real a_alpha, Real a_beta, Real a_gamma,
+                            amrex::Real factor,
+                            ExternalPotential const& external_potential,
+                            Vector<int> const& ensemble_dir,
                             const int lev)
 {
     BL_PROFILE("StochasticPC::AddParticles");
 
     const auto dx = Geom(lev).CellSizeArray();
     const auto plo = Geom(lev).ProbLoArray();
+    EnsembleDirection ens_flag{
+        AMREX_D_DECL(ensemble_dir[0], ensemble_dir[1], ensemble_dir[2])};
 
 #if (AMREX_SPACEDIM == 2)
     const Real cell_vol = dx[0]*dx[1];
@@ -144,13 +151,6 @@ StochasticPC::AddParticles (MultiFab& phi_fine, const BoxArray& ba_to_exclude,
         particle_tile.resize(new_size);
         amrex::Print() << "INIT: NEW SIZE OF PARTICLES IN TILE BOX " << tile_box << " " << new_size << std::endl;
 
-
-        int ext_pot = a_ext_pot;
-        amrex::Real alpha = a_alpha;
-        amrex::Real beta = a_beta;
-        amrex::Real gamma = a_gamma;
-
-
         // now fill in the data
         ParticleType* pstruct = particle_tile.GetArrayOfStructs()().data() + old_size;
         unsigned int* poffset = offsets.dataPtr();
@@ -170,24 +170,30 @@ StochasticPC::AddParticles (MultiFab& phi_fine, const BoxArray& ba_to_exclude,
 #elif (AMREX_SPACEDIM == 3)
                 Real r[3] = {amrex::Random(engine), amrex::Random(engine), amrex::Random(engine)};
 #endif
-                if(factor > 0. && ext_pot)
+                if (factor > 0. && external_potential.enabled)
                 {
                     Real xm = plo[0] + i*dx[0];
                     Real xp = xm + dx[0];
                     Real ym = plo[1] + j*dx[1];
                     Real yp = ym + dx[1];
-                    Real vpx = (xp - beta)*(xp-beta)*(xp-alpha)*(xp-alpha);
-                    Real vmx = (xm - beta)*(xm-beta)*(xm-alpha)*(xm-alpha);
-                    Real vpy = (yp - .5)*(yp - .5)*(yp - .5)*(yp - .5);
-                    Real vmy = (ym - .5)*(ym - .5)*(ym - .5)*(ym - .5);
+                    Real vpx = external_potential_value(external_potential,
+                                   ens_flag, xp, amrex::Real(0.5)*(ym+yp));
+                    Real vmx = external_potential_value(external_potential,
+                                   ens_flag, xm, amrex::Real(0.5)*(ym+yp));
+
+                    Real vpy = external_potential_value(external_potential,
+                                   ens_flag, amrex::Real(0.5)*(xm+xp), yp);
+                    Real vmy = external_potential_value(external_potential,
+                                   ens_flag, amrex::Real(0.5)*(xm+xp), ym);
+                    
                     Real vsubx = (vpx - vmx)/dx[0];
                     Real vsuby = (vpy - vmy)/dx[1];
-
                     Real sampx,sampy;
 
                     if(std::abs(vsubx) >= 1.e-12)
                     {
-                       sampx = -gamma * std::log(1. - r[0]*(1. - std::exp(-2*vsubx*dx[0]/gamma)))/(2.*vsubx);
+                       sampx = amrex::Real(-1.)* std::log(1. - r[0]*(1. - std::exp(-2.*vsubx*dx[0])))
+                             / (2.*vsubx);
 #ifndef AMREX_USE_GPU
                        if( sampx < 0. || sampx > dx[0])
                        {
@@ -202,7 +208,9 @@ StochasticPC::AddParticles (MultiFab& phi_fine, const BoxArray& ba_to_exclude,
 
                     if(std::abs(vsuby) >= 1.e-12)
                     {
-                       sampy = -gamma * std::log(1. - r[1]*(1. - std::exp(-2*vsuby*dx[1]/gamma)))/(2.*vsuby);
+                       sampy = amrex::Real(-1.)
+                             * std::log(1. - r[1]*(1. - std::exp(-2.*vsuby*dx[1])))
+                             / (2.*vsuby);
 #ifndef AMREX_USE_GPU
                        if( sampy < 0. || sampy > dx[1])
                        {
@@ -357,9 +365,9 @@ StochasticPC::RefluxCrseToFine (const BoxArray& ba_to_keep, MultiFab& phi_for_re
 }
 
 void
-StochasticPC::AdvectWithRandomWalk (int lev, Real dt, int a_ext_pot,
-                                    Real a_alpha, Real a_beta,
-                                    Real a_gamma, Vector<int>& a_ensemble_dir)
+StochasticPC::AdvectWithRandomWalk (int lev, Real dt,
+                                    ExternalPotential const& external_potential,
+                                    Vector<int>& a_ensemble_dir)
 {
     BL_PROFILE("StochasticPC::AdvectWithRandomWalk");
     const auto dx = Geom(lev).CellSizeArray();
@@ -373,15 +381,8 @@ StochasticPC::AdvectWithRandomWalk (int lev, Real dt, int a_ext_pot,
 
     Real stddev = std::sqrt(dt);
 
-    int ext_pot = a_ext_pot;
-    amrex::Real alpha = a_alpha;
-    amrex::Real beta = a_beta;
-    amrex::Real gamma = a_gamma;
-
-    GpuArray<Real, AMREX_SPACEDIM> ens_flag{
-                            AMREX_D_DECL(static_cast<Real>(a_ensemble_dir[0]),
-                                         static_cast<Real>(a_ensemble_dir[1]),
-                                         static_cast<Real>(a_ensemble_dir[2]))};
+    EnsembleDirection ens_flag{
+        AMREX_D_DECL(a_ensemble_dir[0], a_ensemble_dir[1], a_ensemble_dir[2])};
 
     for(ParIterType pti(*this, lev); pti.isValid(); ++pti)
     {
@@ -401,21 +402,14 @@ StochasticPC::AdvectWithRandomWalk (int lev, Real dt, int a_ext_pot,
                           Real incy = amrex::RandomNormal(amrex::Real(0.),stddev,engine);,
                           Real incz = amrex::RandomNormal(amrex::Real(0.),stddev,engine););
 
-             if(ext_pot ==1){
-                amrex::Real xloc,yloc;
-                amrex::Real Vsubx, Vsuby;
+             if (external_potential.enabled) {
+                amrex::Real xloc = p.pos(0);
+                amrex::Real yloc = p.pos(1);
 
-                xloc = p.pos(0);
-                yloc = p.pos(1);
-                Vsubx = 2.*(xloc - beta) * (xloc - alpha)* (2.*xloc - alpha - beta) / gamma;
-                Vsuby = 4.*(yloc - .5)*(yloc - .5)*(yloc - .5) / gamma;
-
-		if (ens_flag[0] == amrex::Real(0.)) {
-                    p.pos(0) += -dt*Vsubx;
-                }
-                if (ens_flag[1] == amrex::Real(0.)) {
-                    p.pos(1) += -dt*Vsuby;
-                }
+                p.pos(0) += -dt * external_potential_gradient_component(
+                    external_potential, ens_flag, 0, xloc, yloc);
+                p.pos(1) += -dt * external_potential_gradient_component(
+                    external_potential, ens_flag, 1, xloc, yloc);
              }
 
             AMREX_D_TERM( incx = std::max(-dx[0], std::min( dx[0], incx));,
@@ -428,9 +422,9 @@ StochasticPC::AdvectWithRandomWalk (int lev, Real dt, int a_ext_pot,
             //               incz = 0.;);
 
             // Zero out the fluctuation if it is an ensemble direction
-            AMREX_D_TERM(incx *= (amrex::Real(1.0) - ens_flag[0]);,
-                         incy *= (amrex::Real(1.0) - ens_flag[1]);,
-                         incz *= (amrex::Real(1.0) - ens_flag[2]););
+            AMREX_D_TERM(incx *= static_cast<amrex::Real>(1 - ens_flag[0]);,
+                         incy *= static_cast<amrex::Real>(1 - ens_flag[1]);,
+                         incz *= static_cast<amrex::Real>(1 - ens_flag[2]););
 
             AMREX_D_TERM( p.pos(0) += static_cast<ParticleReal> (incx);,
                           p.pos(1) += static_cast<ParticleReal> (incy);,

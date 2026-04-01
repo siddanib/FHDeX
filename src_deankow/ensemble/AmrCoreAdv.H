@@ -13,6 +13,7 @@
 #include <AMReX_FillPatcher.H>
 #include <AMReX_Vector.H>
 
+#include <ExternalPotential.H>
 #include <FluxMode.H>
 
 #include <limits>
@@ -206,11 +207,7 @@ private:
     amrex::Vector<int> m_ensemble_dir = {AMREX_D_DECL(0, 0, 0)};
     // This variable is used to modify the diffusion coefficient of SPDE
     amrex::Real m_d_spde = amrex::Real(0.5);
-    // Variables related to external potential (Only 2D for now)
-    int m_ext_pot = 0;
-    amrex::Real m_ext_pot_alpha = amrex::Real(0.);
-    amrex::Real m_ext_pot_beta  = amrex::Real(0.);
-    amrex::Real m_ext_pot_gamma = amrex::Real(0.);
+    ExternalPotential m_external_potential;
     InitType m_init_type = InitType::uniform;
     amrex::Vector<amrex::Real> m_init_positions;
     amrex::Vector<amrex::Real> m_init_particles_per_interval;

@@ -27,9 +27,11 @@ struct ParticleData {
         amrex::Real face_x = amrex::Real(0.0);
     };
 
-    void init_particle_params(int max_level, int ensemble_dir_exists)
+    void init_particle_params(int max_level, int ensemble_dir_exists,
+                              ExternalPotential const& external_potential)
     {
         amrex::ParmParse pp(pp_prefix);
+        m_external_potential = external_potential;
 
         use_particles = 0;
         multilevel_run = 1;
@@ -46,19 +48,6 @@ struct ParticleData {
 
             if (max_level != 0 && ensemble_dir_exists) {
                 amrex::Abort("When using particles in ensemble mode you must have max_level == 0");
-            }
-        }
-
-        {
-            amrex::ParmParse pp_pot("ext_pot");
-            pp_pot.query("exists", m_ext_pot);
-            if (m_ext_pot) {
-                if (AMREX_SPACEDIM != 2) {
-                    amrex::Abort("External Potential is coded for 2D.\n");
-                }
-                pp_pot.get("alpha", m_ext_pot_alpha);
-                pp_pot.get("beta", m_ext_pot_beta);
-                pp_pot.get("gamma", m_ext_pot_gamma);
             }
         }
 
@@ -103,9 +92,8 @@ struct ParticleData {
             // **********************************************************************
             // Use this grown boxArray to hold the particles
             // **********************************************************************
-            stochastic_particles->InitParticles(phi_grown, m_ext_pot,
-                                                m_ext_pot_alpha, m_ext_pot_beta,
-                                                m_ext_pot_gamma);
+            stochastic_particles->InitParticles(phi_grown, m_external_potential,
+                                                m_ensemble_dir);
 
             amrex::Print() << "Before Removal we have  " << stochastic_particles->TotalNumberOfParticles() <<
                               " stochastic particles." << std::endl;
@@ -157,8 +145,8 @@ struct ParticleData {
             // **********************************************************************
             // Use phi_crse to hold the particles
             // **********************************************************************
-            stochastic_particles->InitParticles(phi_crse, m_ext_pot, m_ext_pot_alpha,
-                                                m_ext_pot_beta, m_ext_pot_gamma, lev);
+            stochastic_particles->InitParticles(phi_crse, m_external_potential,
+                                                m_ensemble_dir, lev);
             // **********************************************************************
             // Redistribute so every particle is in the "correct" place
             // **********************************************************************
@@ -191,8 +179,7 @@ struct ParticleData {
         stochastic_particles->RemoveParticlesAtLevel(0);
         amrex::Real factor = m_factor;
         stochastic_particles->AddParticles(phi_fine, old_fine_ba, factor,
-                                           m_ext_pot, m_ext_pot_alpha,
-                                           m_ext_pot_beta, m_ext_pot_gamma);
+                                           m_external_potential, m_ensemble_dir);
         phi_fine.setVal(amrex::Real(0.0));
         const int lev = 1;
         const auto dx = stochastic_particles->Geom(lev).CellSizeArray();
@@ -393,17 +380,15 @@ struct ParticleData {
             amrex::Print() << "Adding particles in advance " << std::endl;
 
             amrex::Real factor = m_factor;
-            stochastic_particles->AddParticles(phi_grown, ba_to_exclude,factor,
-                                               m_ext_pot, m_ext_pot_alpha,
-                                               m_ext_pot_beta, m_ext_pot_gamma);
+            stochastic_particles->AddParticles(phi_grown, ba_to_exclude, factor,
+                                               m_external_potential, m_ensemble_dir);
 
             // **********************************************************************
             // Advect the particles in the valid region and in the ghost region
             // **********************************************************************
             BeginFaceFluxDiagnostics(lev, dt_lev);
-            stochastic_particles->AdvectWithRandomWalk(lev, dt_lev, m_ext_pot,
-                                        m_ext_pot_alpha, m_ext_pot_beta,
-                                        m_ext_pot_gamma, m_ensemble_dir);
+            stochastic_particles->AdvectWithRandomWalk(lev, dt_lev,
+                                        m_external_potential, m_ensemble_dir);
             EndFaceFluxDiagnostics(lev, dt_lev);
 
             // **********************************************************************
@@ -499,8 +484,8 @@ struct ParticleData {
                 // Delete the current state of ALL particles
                 stochastic_particles->RemoveParticlesAtLevel(lev);
                 // Add them again based on phi_crse_old
-                stochastic_particles->InitParticles(phi_crse_old, m_ext_pot, m_ext_pot_alpha,
-                                                    m_ext_pot_beta, m_ext_pot_gamma, lev);
+                stochastic_particles->InitParticles(phi_crse_old, m_external_potential,
+                                                    m_ensemble_dir, lev);
                 // **********************************************************************
                 // Redistribute so every particle is in the "correct" place
                 // **********************************************************************
@@ -515,9 +500,8 @@ struct ParticleData {
             // Advect the particles in the valid region and in the ghost region
             // **********************************************************************
             BeginFaceFluxDiagnostics(lev, dt_lev);
-            stochastic_particles->AdvectWithRandomWalk(lev, dt_lev, m_ext_pot,
-                                        m_ext_pot_alpha, m_ext_pot_beta,
-                                        m_ext_pot_gamma, m_ensemble_dir);
+            stochastic_particles->AdvectWithRandomWalk(lev, dt_lev,
+                                        m_external_potential, m_ensemble_dir);
             EndFaceFluxDiagnostics(lev, dt_lev);
             // **********************************************************************
             // Put particles on the correct levels and in the right boxes
@@ -559,11 +543,7 @@ struct ParticleData {
     // reinitialized after every time step. ONLY used in ensemble mode
     bool m_remove_particle_history = false;
     int m_remove_hist_freq = 1;
-    // Variables related to external potential (Only 2D for now)
-    int m_ext_pot = 0;
-    amrex::Real m_ext_pot_alpha = amrex::Real(0.);
-    amrex::Real m_ext_pot_beta  = amrex::Real(0.);
-    amrex::Real m_ext_pot_gamma = amrex::Real(0.);
+    ExternalPotential m_external_potential;
     amrex::Real m_factor = amrex::Real(0.9);
     FaceFluxDiagnosticsConfig m_face_flux_diag;
     amrex::Vector<amrex::Real> m_particle_face_flux_profile;

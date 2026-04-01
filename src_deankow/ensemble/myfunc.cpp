@@ -315,8 +315,8 @@ void advance_phi (MultiFab& phi_old,
                   Geometry const& geom,
                   Vector<BCRec> const& BoundaryCondition,
                   Vector<int> const& a_ensemble_dir,
-                  int a_ext_pot, Real a_alpha, Real a_beta,
-                  Real a_gamma, Real a_d_spde,
+                  ExternalPotential const& external_potential,
+                  Real a_d_spde,
                   MLFluxContext const* ml_ctx)
 {
     int Ncomp = phi_old.nComp();
@@ -330,6 +330,9 @@ void advance_phi (MultiFab& phi_old,
     const Box& domain_bx = geom.Domain();
     const auto dom_lo = lbound(domain_bx);
     const auto dom_hi = ubound(domain_bx);
+    const auto prob_lo = geom.ProbLoArray();
+    EnsembleDirection ensemble_dir{
+        AMREX_D_DECL(a_ensemble_dir[0], a_ensemble_dir[1], a_ensemble_dir[2])};
 
     //Real variance = dxinv*dyinv/(npts_scale*dt);
     Real variance = dxinv*dyinv/dt;
@@ -408,10 +411,12 @@ void advance_phi (MultiFab& phi_old,
                                amrex::RandomEngine const& engine)
                     {
                         compute_flux_x_quantized(i,j,k,fluxx,stochfluxx,phi,
+                                                 prob_lo,
+                                                 ensemble_dir,
                                                  AMREX_D_DECL(dxinv, dyinv, dzinv), dt,
                                                  lo.x, hi.x, dom_lo.x, dom_hi.x,
                                                  bc.lo(0), bc.hi(0), Ncomp,
-                                                 a_ext_pot, a_alpha, a_beta, a_gamma, a_d_spde,
+                                                 external_potential, a_d_spde,
                                                  use_ml ? FluxMode::ml : FluxMode::gaussian,
                                                  engine);
                     });
@@ -420,9 +425,11 @@ void advance_phi (MultiFab& phi_old,
                     [=] AMREX_GPU_DEVICE (int i, int j, int k)
                     {
                         compute_flux_x(i,j,k,fluxx,stochfluxx,phi,
+                                       prob_lo,
+                                       ensemble_dir,
                                        AMREX_D_DECL(dxinv, dyinv, dzinv), dt,
                                        lo.x, hi.x, dom_lo.x, dom_hi.x, bc.lo(0), bc.hi(0),Ncomp,
-                                       a_ext_pot, a_alpha, a_beta, a_gamma, a_d_spde,
+                                       external_potential, a_d_spde,
                                        use_ml ? FluxMode::ml : FluxMode::gaussian);
                     });
             }
@@ -435,10 +442,12 @@ void advance_phi (MultiFab& phi_old,
                                amrex::RandomEngine const& engine)
                     {
                         compute_flux_y_quantized(i,j,k,fluxy,stochfluxy,phi,
+                                                 prob_lo,
+                                                 ensemble_dir,
                                                  AMREX_D_DECL(dxinv, dyinv, dzinv), dt,
                                                  lo.y, hi.y, dom_lo.y, dom_hi.y,
                                                  bc.lo(1), bc.hi(1), Ncomp,
-                                                 a_ext_pot, a_alpha, a_beta, a_gamma, a_d_spde,
+                                                 external_potential, a_d_spde,
                                                  use_ml ? FluxMode::ml : FluxMode::gaussian,
                                                  engine);
                     });
@@ -447,9 +456,11 @@ void advance_phi (MultiFab& phi_old,
                     [=] AMREX_GPU_DEVICE (int i, int j, int k)
                     {
                         compute_flux_y(i,j,k,fluxy,stochfluxy,phi,
+                                       prob_lo,
+                                       ensemble_dir,
                                        AMREX_D_DECL(dxinv, dyinv, dzinv), dt,
                                        lo.y, hi.y, dom_lo.y, dom_hi.y, bc.lo(1), bc.hi(1),Ncomp,
-                                       a_ext_pot, a_alpha, a_beta, a_gamma, a_d_spde,
+                                       external_potential, a_d_spde,
                                        use_ml ? FluxMode::ml : FluxMode::gaussian);
                     });
             }
@@ -462,10 +473,12 @@ void advance_phi (MultiFab& phi_old,
                                amrex::RandomEngine const& engine)
                     {
                         compute_flux_z_quantized(i,j,k,fluxz,stochfluxz,phi,
+                                                 prob_lo,
+                                                 ensemble_dir,
                                                  AMREX_D_DECL(dxinv, dyinv, dzinv), dt,
                                                  lo.z, hi.z, dom_lo.z, dom_hi.z,
                                                  bc.lo(2), bc.hi(2), Ncomp,
-                                                 a_ext_pot, a_alpha, a_beta, a_gamma, a_d_spde,
+                                                 external_potential, a_d_spde,
                                                  use_ml ? FluxMode::ml : FluxMode::gaussian,
                                                  engine);
                     });
@@ -474,9 +487,11 @@ void advance_phi (MultiFab& phi_old,
                     [=] AMREX_GPU_DEVICE (int i, int j, int k)
                     {
                         compute_flux_z(i,j,k,fluxz,stochfluxz,phi,
+                                       prob_lo,
+                                       ensemble_dir,
                                        AMREX_D_DECL(dxinv, dyinv, dzinv), dt,
                                        lo.z, hi.z, dom_lo.z, dom_hi.z, bc.lo(2), bc.hi(2),Ncomp,
-                                       a_ext_pot, a_alpha, a_beta, a_gamma, a_d_spde,
+                                       external_potential, a_d_spde,
                                        use_ml ? FluxMode::ml : FluxMode::gaussian);
                     });
             }

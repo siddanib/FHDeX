@@ -2,6 +2,7 @@
 #define MY_KERNEL_H_
 
 #include <AMReX_FArrayBox.H>
+#include <ExternalPotential.H>
 #include <FluxMode.H>
 
 AMREX_GPU_DEVICE AMREX_FORCE_INLINE
@@ -10,10 +11,10 @@ void init_phi (int i, int j, int k,
                amrex::GpuArray<amrex::Real,AMREX_SPACEDIM> const& dx,
                amrex::GpuArray<amrex::Real,AMREX_SPACEDIM> const& prob_lo,
                amrex::Real /*npts_scale*/, int Ncomp,
-               int a_ext_pot, amrex::Real a_alpha, amrex::Real a_beta,
-               amrex::Real a_gamma)
+               ExternalPotential const& external_potential)
 {
     using amrex::Real;
+    amrex::ignore_unused(external_potential);
     Real cellvol = dx[0]*dx[1];
 
 #if(AMREX_SPACEDIM > 2)
@@ -182,21 +183,18 @@ void compute_flux_x (int i, int j, int k,
                      amrex::Array4<amrex::Real> const& fluxx,
                      amrex::Array4<amrex::Real> const& stochfluxx,
                      amrex::Array4<amrex::Real const> const& phi,
+                     amrex::GpuArray<amrex::Real,AMREX_SPACEDIM> const& prob_lo,
+                     EnsembleDirection const& ensemble_dir,
                      AMREX_D_DECL(amrex::Real dxinv, amrex::Real dyinv,amrex::Real dzinv),
                      amrex::Real dt,
                      int lo, int hi, int dom_lo, int dom_hi, int bc_lo, int bc_hi,int Ncomp,
-                     int a_ext_pot, amrex::Real a_alpha, amrex::Real a_beta,
-                     amrex::Real a_gamma, amrex::Real a_d_spde,
+                     ExternalPotential const& external_potential,
+                     amrex::Real a_d_spde,
                      FluxMode flux_mode)
 {
     int coeff_index = 0; //Ncomp-1;
     amrex::Real phibdry = amrex::Real(0.);
     amrex::Real stofact = amrex::Real(1.);
-
-    int ext_pot = a_ext_pot;
-    amrex::Real alpha = a_alpha;
-    amrex::Real beta = a_beta;
-    amrex::Real gamma = a_gamma;
 
     amrex::Real phip,phim, phipn, phimn;
     phipn = amrex::Real(0.);
@@ -282,14 +280,14 @@ void compute_flux_x (int i, int j, int k,
         amrex::Real sqphiavg = std::sqrt(2.*a_d_spde)*0.5*(std::sqrt(phipn)+std::sqrt(phimn));
         fluxx(i,j,k,coeff_index) += stofact * stochfluxx(i,j,k) * sqphiavg;
     }
-    if(ext_pot == 1) {
-       amrex::Real xloc;
-       xloc = i / dxinv;
+    if (external_potential.enabled) {
+       amrex::Real xloc = prob_lo[0] + i / dxinv;
+       amrex::Real yloc = prob_lo[1] + (j + amrex::Real(0.5)) / dyinv;
        amrex::Real phiavg = 0.5*(phim+phip);
-       amrex::Real Vsubx;
-       // Note: External potential logicv is incorrect for periodic boundaries
-       Vsubx = 2.*(xloc - beta) * (xloc - alpha)* (2.*xloc - alpha - beta) / gamma;
-       fluxx(i,j,k,coeff_index) += phiavg * Vsubx;
+       // Note: External potential logic is incorrect for periodic boundaries
+       fluxx(i,j,k,coeff_index) += phiavg *
+           external_potential_gradient_component(external_potential,
+                                       ensemble_dir, 0, xloc, yloc);
     }
     // If the boundary is a wall flux has to be ZERO
     if (i == dom_lo && wall_lo) {
@@ -304,18 +302,22 @@ void compute_flux_x_quantized (int i, int j, int k,
                                amrex::Array4<amrex::Real> const& fluxx,
                                amrex::Array4<amrex::Real> const& stochfluxx,
                                amrex::Array4<amrex::Real const> const& phi,
+                               amrex::GpuArray<amrex::Real,AMREX_SPACEDIM> const& prob_lo,
+                               EnsembleDirection const& ensemble_dir,
                                AMREX_D_DECL(amrex::Real dxinv, amrex::Real dyinv,amrex::Real dzinv),
                                amrex::Real dt,
                                int lo, int hi, int dom_lo, int dom_hi, int bc_lo, int bc_hi,int Ncomp,
-                               int a_ext_pot, amrex::Real a_alpha, amrex::Real a_beta,
-                               amrex::Real a_gamma, amrex::Real a_d_spde,
+                               ExternalPotential const& external_potential,
+                               amrex::Real a_d_spde,
                                FluxMode flux_mode,
                                amrex::RandomEngine const& engine)
 {
     compute_flux_x(i, j, k, fluxx, stochfluxx, phi,
+                   prob_lo,
+                   ensemble_dir,
                    AMREX_D_DECL(dxinv, dyinv, dzinv), dt,
                    lo, hi, dom_lo, dom_hi, bc_lo, bc_hi, Ncomp,
-                   a_ext_pot, a_alpha, a_beta, a_gamma, a_d_spde, flux_mode);
+                   external_potential, a_d_spde, flux_mode);
     // The flux returned has the units of m^-2s^-1. Convert this to number of particles  
     int coeff_index = 0;
     amrex::Real face_area_x = AMREX_D_TERM(amrex::Real(1.),*dyinv,*dzinv); 
@@ -337,21 +339,18 @@ void compute_flux_y (int i, int j, int k,
                      amrex::Array4<amrex::Real> const& fluxy,
                      amrex::Array4<amrex::Real> const& stochfluxy,
                      amrex::Array4<amrex::Real const> const& phi,
+                     amrex::GpuArray<amrex::Real,AMREX_SPACEDIM> const& prob_lo,
+                     EnsembleDirection const& ensemble_dir,
                      AMREX_D_DECL(amrex::Real dxinv, amrex::Real dyinv,amrex::Real dzinv),
                      amrex::Real dt,
                      int lo, int hi, int dom_lo, int dom_hi, int bc_lo, int bc_hi, int Ncomp,
-                     int a_ext_pot, amrex::Real a_alpha, amrex::Real a_beta,
-                     amrex::Real a_gamma, amrex::Real a_d_spde,
+                     ExternalPotential const& external_potential,
+                     amrex::Real a_d_spde,
                      FluxMode flux_mode)
 {
     int coeff_index = 0; //Ncomp-1;
     amrex::Real phibdry = amrex::Real(0.);
     amrex::Real stofact = amrex::Real(1.);
-
-    int ext_pot = a_ext_pot;
-    amrex::Real alpha = a_alpha;
-    amrex::Real beta = a_beta;
-    amrex::Real gamma = a_gamma;
 
     amrex::Real phip,phim, phipn, phimn;
     phipn = amrex::Real(0.);
@@ -405,13 +404,13 @@ void compute_flux_y (int i, int j, int k,
         amrex::Real sqphiavg = std::sqrt(2.0*a_d_spde)*0.5*(std::sqrt(phipn)+std::sqrt(phimn));
         fluxy(i,j,k,coeff_index) += stofact * stochfluxy(i,j,k)* sqphiavg;
     }
-    if(ext_pot == 1) {
-       amrex::Real yloc;
-       yloc = j / dyinv;
+    if (external_potential.enabled) {
+       amrex::Real xloc = prob_lo[0] + (i + amrex::Real(0.5)) / dxinv;
+       amrex::Real yloc = prob_lo[1] + j / dyinv;
        amrex::Real phiavg = 0.5*(phip+phim);
-       amrex::Real Vsuby;
-       Vsuby = 4.*(yloc - .5)*(yloc - .5)*(yloc - .5) / gamma;
-       fluxy(i,j,k,coeff_index) += phiavg * Vsuby;
+       fluxy(i,j,k,coeff_index) += phiavg *
+           external_potential_gradient_component(external_potential,
+                                        ensemble_dir, 1, xloc, yloc);
     }
     // If the boundary is a wall flux has to be ZERO
     if (j == dom_lo && wall_lo) {
@@ -426,18 +425,22 @@ void compute_flux_y_quantized (int i, int j, int k,
                                amrex::Array4<amrex::Real> const& fluxy,
                                amrex::Array4<amrex::Real> const& stochfluxy,
                                amrex::Array4<amrex::Real const> const& phi,
+                               amrex::GpuArray<amrex::Real,AMREX_SPACEDIM> const& prob_lo,
+                               EnsembleDirection const& ensemble_dir,
                                AMREX_D_DECL(amrex::Real dxinv, amrex::Real dyinv,amrex::Real dzinv),
                                amrex::Real dt,
                                int lo, int hi, int dom_lo, int dom_hi, int bc_lo, int bc_hi, int Ncomp,
-                               int a_ext_pot, amrex::Real a_alpha, amrex::Real a_beta,
-                               amrex::Real a_gamma, amrex::Real a_d_spde,
+                               ExternalPotential const& external_potential,
+                               amrex::Real a_d_spde,
                                FluxMode flux_mode,
                                amrex::RandomEngine const& engine)
 {
     compute_flux_y(i, j, k, fluxy, stochfluxy, phi,
+                   prob_lo,
+                   ensemble_dir,
                    AMREX_D_DECL(dxinv, dyinv, dzinv), dt,
                    lo, hi, dom_lo, dom_hi, bc_lo, bc_hi, Ncomp,
-                   a_ext_pot, a_alpha, a_beta, a_gamma, a_d_spde, flux_mode);
+                   external_potential, a_d_spde, flux_mode);
     // The flux returned has the units of m^-2s^-1. Convert this to number of particles  
     int coeff_index = 0;
     amrex::Real face_area_y = AMREX_D_TERM(dxinv, *amrex::Real(1.),*dzinv); 
@@ -462,15 +465,18 @@ void compute_flux_z (int i, int j, int k,
                      amrex::Array4<amrex::Real> const& fluxz,
                      amrex::Array4<amrex::Real> const& stochfluxz,
                      amrex::Array4<amrex::Real const> const& phi,
+                     amrex::GpuArray<amrex::Real,AMREX_SPACEDIM> const& prob_lo,
+                     EnsembleDirection const& ensemble_dir,
                      AMREX_D_DECL(amrex::Real dxinv, amrex::Real dyinv,amrex::Real dzinv),
                      amrex::Real dt,
                      int lo, int hi, int dom_lo, int dom_hi, int bc_lo, int bc_hi, int Ncomp,
-                     int a_ext_pot, amrex::Real a_alpha, amrex::Real a_beta,
-                     amrex::Real a_gamma, amrex::Real a_d_spde,
+                     ExternalPotential const& external_potential,
+                     amrex::Real a_d_spde,
                      FluxMode flux_mode)
 {
-    amrex::ignore_unused(a_alpha, a_beta, a_gamma);
-    if (a_ext_pot) {
+    amrex::ignore_unused(prob_lo);
+    amrex::ignore_unused(ensemble_dir);
+    if (external_potential.enabled) {
         amrex::Abort("External potential not coded in 3D scenario yet.\n");
     }
 
@@ -535,18 +541,22 @@ void compute_flux_z_quantized (int i, int j, int k,
                                amrex::Array4<amrex::Real> const& fluxz,
                                amrex::Array4<amrex::Real> const& stochfluxz,
                                amrex::Array4<amrex::Real const> const& phi,
+                               amrex::GpuArray<amrex::Real,AMREX_SPACEDIM> const& prob_lo,
+                               EnsembleDirection const& ensemble_dir,
                                AMREX_D_DECL(amrex::Real dxinv, amrex::Real dyinv,amrex::Real dzinv),
                                amrex::Real dt,
                                int lo, int hi, int dom_lo, int dom_hi, int bc_lo, int bc_hi, int Ncomp,
-                               int a_ext_pot, amrex::Real a_alpha, amrex::Real a_beta,
-                               amrex::Real a_gamma, amrex::Real a_d_spde,
+                               ExternalPotential const& external_potential,
+                               amrex::Real a_d_spde,
                                FluxMode flux_mode,
                                amrex::RandomEngine const& engine)
 {
     compute_flux_z(i, j, k, fluxz, stochfluxz, phi,
+                   prob_lo,
+                   ensemble_dir,
                    AMREX_D_DECL(dxinv, dyinv, dzinv), dt,
                    lo, hi, dom_lo, dom_hi, bc_lo, bc_hi, Ncomp,
-                   a_ext_pot, a_alpha, a_beta, a_gamma, a_d_spde, flux_mode);
+                   external_potential, a_d_spde, flux_mode);
     // The flux returned has the units of m^-2s^-1. Convert this to number of particles  
     int coeff_index = 0;
     amrex::Real face_area_z = AMREX_D_TERM(dxinv,*dyinv,amrex::Real(1.)); 
