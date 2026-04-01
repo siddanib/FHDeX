@@ -718,7 +718,7 @@ AmrCoreAdv::InitializeExternalPotentialXLevel0 (amrex::MultiFab& phi, amrex::Rea
         }
     }
 
-    long long num_selected_cells = static_cast<long long>(selected_cells.size());
+    amrex::Long num_selected_cells = static_cast<amrex::Long>(selected_cells.size());
     amrex::ParallelDescriptor::ReduceLongSum(num_selected_cells);
     if (num_selected_cells == 0) {
         amrex::Abort("external_potential_x initialization selected zero level-0 cells.");
