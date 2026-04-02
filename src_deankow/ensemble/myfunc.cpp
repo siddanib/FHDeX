@@ -6,7 +6,6 @@
 #include <AMReX_Gpu.H>
 #include <AMReX_GpuContainers.H>
 #include <AMReX_Math.H>
-#include <AMReX_Print.H>
 #include <AMReX_Random.H>
 #include "common_functions.H"
 #include "rng_functions.H"
@@ -17,20 +16,6 @@
 namespace {
 
 using namespace amrex;
-
-const char* TorchScalarTypeName (c10::ScalarType type)
-{
-    switch (type) {
-    case c10::ScalarType::Float: return "float32";
-    case c10::ScalarType::Double: return "float64";
-    case c10::ScalarType::Half: return "float16";
-    case c10::ScalarType::BFloat16: return "bfloat16";
-    case c10::ScalarType::Int: return "int32";
-    case c10::ScalarType::Long: return "int64";
-    case c10::ScalarType::Bool: return "bool";
-    default: return "other";
-    }
-}
 
 constexpr torch::Dtype TorchRealDType ()
 {
@@ -226,12 +211,8 @@ void FillMLStochFluxDir (int dir,
         amrex::ignore_unused(use_cuda);
         opts = opts.device(torch::kCPU);
 #endif
-        // Materialize Torch-owned tensors before repeated JIT calls. The
-        // scripted model uses a different branch once history is present, so
-        // we keep a pristine base copy of each input and pass fresh clones to
-        // every forward call to avoid CPU-side aliasing or in-place mutation.
-        at::Tensor dens_base = torch::from_blob(dens_buf.dataPtr(), {ncell, dens_T, 2}, opts).clone();
-        at::Tensor flux_base = torch::from_blob(flux_buf.dataPtr(), {ncell, flux_T, 1}, opts).clone();
+        at::Tensor dens_t     = torch::from_blob(dens_buf.dataPtr(), {ncell, dens_T, 2}, opts).clone();
+        at::Tensor flux_t     = torch::from_blob(flux_buf.dataPtr(), {ncell, flux_T, 1}, opts).clone();
         at::Tensor tgt_t     = torch::from_blob(x_buf.dataPtr(),    {ncell, 1, 1},    opts).clone();
 
         torch::InferenceMode guard;
@@ -240,37 +221,16 @@ void FillMLStochFluxDir (int dir,
         for (int s = 0; s < steps; ++s) {
             amrex::Real tval = flow_t0 + dt * static_cast<amrex::Real>(s);
             at::Tensor time_pst = torch::full({ncell, 1, 1}, tval, opts);
-            at::Tensor dens_in = dens_base.clone();
-            at::Tensor flux_in = flux_base.clone();
-            at::Tensor tgt_in = tgt_t.clone();
-            if (mfi.LocalIndex() == 0 && s == 0) {
-                amrex::Print() << "ML forward input summary:"
-                               << " dir=" << dir
-                               << " hist_count=" << hist_count
-                               << " history_len=" << history_len
-                               << " ncell=" << ncell
-                               << " dens=(" << dens_in.size(0) << "," << dens_in.size(1) << "," << dens_in.size(2) << ")"
-                               << " flux=(" << flux_in.size(0) << "," << flux_in.size(1) << "," << flux_in.size(2) << ")"
-                               << " tgt=(" << tgt_in.size(0) << "," << tgt_in.size(1) << "," << tgt_in.size(2) << ")"
-                               << " time=(" << time_pst.size(0) << "," << time_pst.size(1) << "," << time_pst.size(2) << ")"
-                               << " dtype=" << TorchScalarTypeName(dens_in.scalar_type())
-                               << " device=" << dens_in.device()
-                               << " dens_contig=" << dens_in.is_contiguous()
-                               << " flux_contig=" << flux_in.is_contiguous()
-                               << " tgt_contig=" << tgt_in.is_contiguous()
-                               << " time_contig=" << time_pst.is_contiguous()
-                               << "\n";
-            }
             at::Tensor grad_t;
 #ifdef AMREX_USE_CUDA
-            grad_t = module->forward({tgt_in, dens_in, flux_in, time_pst}).toTensor();
+            grad_t = module->forward({tgt_t, dens_t, flux_t, time_pst}).toTensor();
 #else
 #ifdef AMREX_USE_OMP
 #pragma omp critical(torch_jit_forward_cpu)
 #endif
             {
                 ScopedDisableFPExcept no_fpe(amrex::FPExcept::all);
-                grad_t = module->forward({tgt_in, dens_in, flux_in, time_pst}).toTensor();
+                grad_t = module->forward({tgt_t, dens_t, flux_t, time_pst}).toTensor();
             }
 #endif
             if (grad_t.dim() == 1) {
