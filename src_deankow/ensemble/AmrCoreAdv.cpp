@@ -263,8 +263,8 @@ AmrCoreAdv::AmrCoreAdv ()
 #ifdef AMREX_USE_CUDA
             load_model();
 #else
-            Vector<char> model_bytes;
 #ifdef AMREX_USE_MPI
+            Vector<char> model_bytes;
             MPI_Comm node_comm = MPI_COMM_NULL;
             int ierr = MPI_Comm_split_type(ParallelDescriptor::Communicator(),
                                            MPI_COMM_TYPE_SHARED,
@@ -340,8 +340,21 @@ AmrCoreAdv::AmrCoreAdv ()
                 pop_node_comm();
                 throw;
             }
-#else
-            std::string model_blob(model_bytes.data(), model_bytes.size());
+#endif
+#ifndef AMREX_USE_MPI
+            std::string model_blob;
+            {
+                std::ifstream is(m_ml_model_file, std::ios::binary);
+                if (!is.good()) {
+                    amrex::Abort("Error opening the TorchScript model file.");
+                }
+                std::ostringstream os;
+                os << is.rdbuf();
+                if (!is.good() && !is.eof()) {
+                    amrex::Abort("Error reading the TorchScript model file.");
+                }
+                model_blob = os.str();
+            }
             std::istringstream model_stream(model_blob, std::ios::binary);
             m_ml_module = std::make_unique<torch::jit::script::Module>(
                 torch::jit::load(model_stream));
