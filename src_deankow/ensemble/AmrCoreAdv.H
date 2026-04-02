@@ -214,6 +214,7 @@ private:
     // ML flux configuration
     FluxMode m_flux_mode = FluxMode::gaussian;
     std::string m_ml_model_file;
+    int m_ml_load_batch_size = 1;
     int m_ml_history_len = 10;
     int m_ml_history_ngrow = 1;
     int m_ml_flow_steps = 100;

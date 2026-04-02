@@ -241,7 +241,8 @@ AmrCoreAdv::AmrCoreAdv ()
 #ifdef AMREX_USE_CUDA
         const auto ml_device = torch::Device(torch::kCUDA, amrex::Gpu::Device::deviceId());
 #endif
-        try {
+        const auto load_model = [&] ()
+        {
 #ifdef AMREX_USE_CUDA
             m_ml_module = std::make_unique<torch::jit::script::Module>(
                 torch::jit::load(m_ml_model_file, ml_device));
@@ -251,6 +252,18 @@ AmrCoreAdv::AmrCoreAdv ()
 #endif
             m_ml_module->to(TorchRealDType());
             m_ml_module->eval();
+        };
+        try {
+            const int nranks = amrex::ParallelDescriptor::NProcs();
+            const int rank = amrex::ParallelDescriptor::MyProc();
+            const int batch_size = std::max(1, m_ml_load_batch_size);
+            for (int start = 0; start < nranks; start += batch_size) {
+                const int stop = std::min(start + batch_size, nranks);
+                if (rank >= start && rank < stop) {
+                    load_model();
+                }
+                amrex::ParallelDescriptor::Barrier();
+            }
         }
         catch (const c10::Error&) {
             amrex::Abort("Error loading the TorchScript model.");
@@ -1003,6 +1016,8 @@ AmrCoreAdv::ReadParameters ( amrex::Vector<int>& bc_lo, amrex::Vector<int>& bc_h
         pp.query("flux_mode", m_flux_mode);
 
         pp.query("ml_model_file", m_ml_model_file);
+        m_ml_load_batch_size = 1;
+        pp.query("ml_load_batch_size", m_ml_load_batch_size);
         m_ml_history_len = 10;
         pp.query("ml_history_len", m_ml_history_len);
         m_ml_history_ngrow = 1;
@@ -1015,6 +1030,9 @@ AmrCoreAdv::ReadParameters ( amrex::Vector<int>& bc_lo, amrex::Vector<int>& bc_h
         }
         if (m_flux_mode == FluxMode::ml && m_ml_history_ngrow < 1) {
             amrex::Abort("ml_history_ngrow must be >= 1 when flux_mode=ml.");
+        }
+        if (m_ml_load_batch_size < 1) {
+            amrex::Abort("ml_load_batch_size must be >= 1.");
         }
 
         m_ml_flow_steps = 100;
