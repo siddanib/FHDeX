@@ -321,18 +321,32 @@ AmrCoreAdv::AmrCoreAdv ()
                                               ParallelContext::IOProcessorNumberSub(),
                                               ParallelContext::CommunicatorSub());
                 }
-#ifdef AMREX_USE_MPI
+                const int local_nprocs = ParallelContext::NProcsSub();
+                const int local_rank = ParallelContext::MyProcSub();
+                const int batch_size = std::max(1, m_ml_load_batch_size);
+                for (int start = 0; start < local_nprocs; start += batch_size) {
+                    const int stop = std::min(start + batch_size, local_nprocs);
+                    if (local_rank >= start && local_rank < stop) {
+                        std::string model_blob(model_bytes.data(), model_bytes.size());
+                        std::istringstream model_stream(model_blob, std::ios::binary);
+                        m_ml_module = std::make_unique<torch::jit::script::Module>(
+                            torch::jit::load(model_stream));
+                        finalize_model();
+                    }
+                    ParallelDescriptor::Barrier(ParallelContext::CommunicatorSub());
+                }
                 pop_node_comm();
             } catch (...) {
                 pop_node_comm();
                 throw;
             }
-#endif
+#else
             std::string model_blob(model_bytes.data(), model_bytes.size());
             std::istringstream model_stream(model_blob, std::ios::binary);
             m_ml_module = std::make_unique<torch::jit::script::Module>(
                 torch::jit::load(model_stream));
             finalize_model();
+#endif
 #endif
         }
         catch (const c10::Error&) {
@@ -344,8 +358,8 @@ AmrCoreAdv::AmrCoreAdv ()
         m_ml_module->to(ml_device);
 #else
         m_ml_use_cuda = false;
-        amrex::Print() << "ML model loaded via node-local AMReX broadcast: "
-                       << m_ml_model_file << "\n";
+        amrex::Print() << "ML model loaded via node-local AMReX broadcast with local deserialize batch size "
+                       << m_ml_load_batch_size << ": " << m_ml_model_file << "\n";
 #endif
 #ifdef AMREX_USE_CUDA
         amrex::Print() << "ML model loaded: " << m_ml_model_file << "\n";
