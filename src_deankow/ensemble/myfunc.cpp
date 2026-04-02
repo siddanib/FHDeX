@@ -9,6 +9,7 @@
 #include <AMReX_Random.H>
 #include "common_functions.H"
 #include "rng_functions.H"
+#include <limits>
 #include <torch/script.h>
 #include <type_traits>
 
@@ -260,7 +261,8 @@ void FillMLStochFluxDir (int dir,
             if (grad_t.dim() != 3 || grad_t.size(1) != 1 || grad_t.size(2) != 1) {
                 amrex::Abort("ML flow model must return shape (ncell,1,1) or compatible.");
             }
-            tgt_t += dt * grad_t;
+            grad_t = torch::nan_to_num(grad_t, 0.0, 0.0, 0.0);
+            tgt_t = torch::nan_to_num(tgt_t + dt * grad_t, 0.0, 0.0, 0.0);
         }
         tgt_t = tgt_t.contiguous();
         //amrex::Gpu::ManagedVector<amrex::Real> out_buf(ncell);
@@ -306,7 +308,12 @@ void FillMLStochFluxDir (int dir,
             amrex::Real phiR = phi(iR, jR, kR, 0);
             phiR *= dvol;
             phiR = std::max(phiR, amrex::Real(0.));
-            flux_val *= ml_output_std_fctr*std::sqrt(phiL+phiR);
+            if (flux_val != flux_val ||
+                flux_val > std::numeric_limits<amrex::Real>::max() ||
+                flux_val < -std::numeric_limits<amrex::Real>::max()) {
+                flux_val = amrex::Real(0.0);
+            }
+            flux_val *= ml_output_std_fctr * std::sqrt(std::max(phiL + phiR, amrex::Real(0.0)));
             flux_val += ml_output_mn_fctr*(phiL-phiR);
             // Quantization of Net particles crossing
             if (quntz_l) {
