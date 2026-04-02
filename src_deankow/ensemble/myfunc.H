@@ -7,14 +7,9 @@
 
 #include <ExternalPotential.H>
 #include <FluxMode.H>
+#include <torch/script.h>
 
 using namespace amrex;
-
-namespace torch {
-namespace jit {
-class Module;
-}
-}
 
 struct MLFluxContext {
     FluxMode mode = FluxMode::gaussian;
@@ -33,7 +28,7 @@ struct MLFluxContext {
     bool quantize_ml_output = false;
     const amrex::MultiFab* phi_hist = nullptr;
     amrex::Array<amrex::MultiFab*, AMREX_SPACEDIM> flux_hist = {};
-    torch::jit::Module* module = nullptr;
+    torch::jit::script::Module* module = nullptr;
 #ifdef AMREX_USE_GPU	    
     bool use_cuda = true;
 #else

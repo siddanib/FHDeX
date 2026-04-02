@@ -243,10 +243,10 @@ AmrCoreAdv::AmrCoreAdv ()
 #endif
         try {
 #ifdef AMREX_USE_CUDA
-            m_ml_module = std::make_unique<torch::jit::Module>(
+            m_ml_module = std::make_unique<torch::jit::script::Module>(
                 torch::jit::load(m_ml_model_file, ml_device));
 #else
-            m_ml_module = std::make_unique<torch::jit::Module>(
+            m_ml_module = std::make_unique<torch::jit::script::Module>(
                 torch::jit::load(m_ml_model_file));
 #endif
             m_ml_module->to(TorchRealDType());

@@ -66,7 +66,7 @@ void FillMLStochFluxDir (int dir,
                          amrex::Geometry const& geom,
                          int hist_count, int history_len,
                          int flow_steps, amrex::Real flow_t0, amrex::Real flow_t1,
-                         torch::jit::Module* module,
+                         torch::jit::script::Module* module,
                          bool use_cuda, amrex::Real ml_input_scale,
                          amrex::Real ml_output_mn_fctr,
                          amrex::Real ml_output_std_fctr,
@@ -84,7 +84,7 @@ void FillMLStochFluxDir (int dir,
 
     const int dens_T = hist_count + 1;
     const int flux_T = (hist_count == 0) ? 1 : hist_count;
-#ifdef _OPENMP
+#ifdef AMREX_USE_OMP
 #pragma omp parallel if (Gpu::notInLaunchRegion())
 #endif
     for (MFIter mfi(phi_old,TilingIfNotGPU()); mfi.isValid(); ++mfi)
@@ -199,7 +199,17 @@ void FillMLStochFluxDir (int dir,
         for (int s = 0; s < steps; ++s) {
             amrex::Real tval = flow_t0 + dt * static_cast<amrex::Real>(s);
             at::Tensor time_pst = torch::full({ncell, 1, 1}, tval, opts);
-            at::Tensor grad_t = module->forward({tgt_t, dens_t, flux_t, time_pst}).toTensor();
+            at::Tensor grad_t;
+#ifdef AMREX_USE_CUDA
+            grad_t = module->forward({tgt_t, dens_t, flux_t, time_pst}).toTensor();
+#else
+#ifdef AMREX_USE_OMP
+#pragma omp critical(torch_jit_forward_cpu)
+#endif
+            {
+                grad_t = module->forward({tgt_t, dens_t, flux_t, time_pst}).toTensor();
+            }
+#endif
             if (grad_t.dim() == 1) {
                 grad_t = grad_t.view({ncell, 1, 1});
             } else if (grad_t.dim() == 2) {
