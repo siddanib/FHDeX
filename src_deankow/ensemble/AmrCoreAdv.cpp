@@ -288,7 +288,6 @@ AmrCoreAdv::AmrCoreAdv ()
                 }
             };
             try {
-#endif
                 if (ParallelContext::IOProcessorSub()) {
                     std::ifstream is(m_ml_model_file, std::ios::binary);
                     if (!is.good()) {
@@ -340,8 +339,7 @@ AmrCoreAdv::AmrCoreAdv ()
                 pop_node_comm();
                 throw;
             }
-#endif
-#ifndef AMREX_USE_MPI
+#else
             std::string model_blob;
             {
                 std::ifstream is(m_ml_model_file, std::ios::binary);
