@@ -241,6 +241,11 @@ AmrCoreAdv::AmrCoreAdv ()
 #ifdef AMREX_USE_CUDA
         const auto ml_device = torch::Device(torch::kCUDA, amrex::Gpu::Device::deviceId());
 #endif
+        const auto finalize_model = [&] ()
+        {
+            m_ml_module->to(TorchRealDType());
+            m_ml_module->eval();
+        };
         const auto load_model = [&] ()
         {
 #ifdef AMREX_USE_CUDA
@@ -250,20 +255,20 @@ AmrCoreAdv::AmrCoreAdv ()
             m_ml_module = std::make_unique<torch::jit::script::Module>(
                 torch::jit::load(m_ml_model_file));
 #endif
-            m_ml_module->to(TorchRealDType());
-            m_ml_module->eval();
+            finalize_model();
         };
         try {
-            const int nranks = amrex::ParallelDescriptor::NProcs();
-            const int rank = amrex::ParallelDescriptor::MyProc();
-            const int batch_size = std::max(1, m_ml_load_batch_size);
-            for (int start = 0; start < nranks; start += batch_size) {
-                const int stop = std::min(start + batch_size, nranks);
-                if (rank >= start && rank < stop) {
-                    load_model();
-                }
-                amrex::ParallelDescriptor::Barrier();
-            }
+#ifdef AMREX_USE_CUDA
+            load_model();
+#else
+            Vector<char> model_bytes;
+            ParallelDescriptor::ReadAndBcastFile(m_ml_model_file, model_bytes);
+            std::string model_blob(model_bytes.data(), model_bytes.size());
+            std::istringstream model_stream(model_blob, std::ios::binary);
+            m_ml_module = std::make_unique<torch::jit::script::Module>(
+                torch::jit::load(model_stream));
+            finalize_model();
+#endif
         }
         catch (const c10::Error&) {
             amrex::Abort("Error loading the TorchScript model.");
@@ -274,8 +279,12 @@ AmrCoreAdv::AmrCoreAdv ()
         m_ml_module->to(ml_device);
 #else
         m_ml_use_cuda = false;
+        amrex::Print() << "ML model loaded via rank-0 AMReX broadcast: "
+                       << m_ml_model_file << "\n";
 #endif
+#ifdef AMREX_USE_CUDA
         amrex::Print() << "ML model loaded: " << m_ml_model_file << "\n";
+#endif
     }
 }
 
