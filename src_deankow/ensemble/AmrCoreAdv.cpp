@@ -896,23 +896,25 @@ AmrCoreAdv::UpdateMLPhiHistory (int lev)
         m_ml_hist_count[lev] = count + 1;
     }
     else {
-    	// History full: shift left by 1 to keep most recent hist_len entries.
-        // Create temporary duplicates
-        amrex::MultiFab phi_hist_copy(phi_hist.boxArray(),
-                                      phi_hist.DistributionMap(),
-                                      phi_hist.nComp()-1, 0);
-    	amrex::MultiFab::Copy(phi_hist_copy, phi_hist, 1, 0,
-                              phi_hist.nComp()-1, 0);
-        // Swap the first  hist_len-1 to phi_hist
-        amrex::MultiFab::Swap(phi_hist, phi_hist_copy, 0, 0,
-                              phi_hist.nComp()-1, 0);
+        if (hist_len == 1) {
+            amrex::MultiFab::Copy(phi_hist, phi_old[lev], 0, 0, 1, 0);
+        } else {
+            // History full: shift left by 1 to keep most recent hist_len entries.
+            amrex::MultiFab phi_hist_copy(phi_hist.boxArray(),
+                                          phi_hist.DistributionMap(),
+                                          phi_hist.nComp()-1, 0);
+            amrex::MultiFab::Copy(phi_hist_copy, phi_hist, 1, 0,
+                                  phi_hist.nComp()-1, 0);
+            amrex::MultiFab::Swap(phi_hist, phi_hist_copy, 0, 0,
+                                  phi_hist.nComp()-1, 0);
 
-    	const int head = hist_len - 1;
-    	amrex::MultiFab::Copy(phi_hist, phi_old[lev], 0, head, 1, 0);
+            const int head = hist_len - 1;
+            amrex::MultiFab::Copy(phi_hist, phi_old[lev], 0, head, 1, 0);
+        }
 
-    	phi_hist.FillBoundary(Geom(lev).periodicity());
+        phi_hist.FillBoundary(Geom(lev).periodicity());
 
-    	m_ml_hist_count[lev] = hist_len;
+        m_ml_hist_count[lev] = hist_len;
     }
 }
 
@@ -1822,7 +1824,7 @@ AmrCoreAdv::WritePlotFile () const
     }
 
 #ifdef AMREX_PARTICLES
-   particleData.writePlotFile(plotfilename,phi_new[1]);
+   particleData.writePlotFile(plotfilename, phi_new[finest_level]);
 #endif
 }
 
