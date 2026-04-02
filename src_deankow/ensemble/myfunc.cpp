@@ -1,4 +1,5 @@
 #include "myfunc.H"
+#include <AMReX.H>
 #include "mykernel.H"
 #include <AMReX_BCRec.H>
 #include <AMReX_BCUtil.H>
@@ -39,6 +40,24 @@ constexpr torch::Dtype TorchRealDType ()
         return torch::kFloat64;
     }
 }
+
+struct ScopedDisableFPExcept
+{
+    explicit ScopedDisableFPExcept (amrex::FPExcept excepts)
+        : m_prev(amrex::disableFPExcept(excepts))
+    {}
+
+    ~ScopedDisableFPExcept ()
+    {
+        amrex::setFPExcept(m_prev);
+    }
+
+    ScopedDisableFPExcept (ScopedDisableFPExcept const&) = delete;
+    ScopedDisableFPExcept& operator= (ScopedDisableFPExcept const&) = delete;
+
+private:
+    amrex::FPExcept m_prev;
+};
 
 // This function updates the flux history as the scaling is very different
 // flux history is in NET PARTICLES CROSSING and NOT NUMBER DENSITY
@@ -250,6 +269,7 @@ void FillMLStochFluxDir (int dir,
 #pragma omp critical(torch_jit_forward_cpu)
 #endif
             {
+                ScopedDisableFPExcept no_fpe(amrex::FPExcept::all);
                 grad_t = module->forward({tgt_in, dens_in, flux_in, time_pst}).toTensor();
             }
 #endif
