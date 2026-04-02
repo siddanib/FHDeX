@@ -1,5 +1,6 @@
 
 #include <AMReX_ParallelDescriptor.H>
+#include <AMReX_ParallelContext.H>
 #include <AMReX_ParmParse.H>
 #include <AMReX_MultiFabUtil.H>
 #include <AMReX_PlotFileUtil.H>
@@ -19,6 +20,7 @@
 #include <mykernel.H>
 #include "chrono"
 #include <algorithm>
+#include <cstdint>
 #include <cmath>
 #include <fstream>
 #include <iomanip>
@@ -262,7 +264,70 @@ AmrCoreAdv::AmrCoreAdv ()
             load_model();
 #else
             Vector<char> model_bytes;
-            ParallelDescriptor::ReadAndBcastFile(m_ml_model_file, model_bytes);
+#ifdef AMREX_USE_MPI
+            MPI_Comm node_comm = MPI_COMM_NULL;
+            int ierr = MPI_Comm_split_type(ParallelDescriptor::Communicator(),
+                                           MPI_COMM_TYPE_SHARED,
+                                           ParallelDescriptor::MyProc(),
+                                           MPI_INFO_NULL,
+                                           &node_comm);
+            if (ierr != MPI_SUCCESS) {
+                amrex::ParallelDescriptor::MPI_Error(__FILE__, __LINE__,
+                                                     "MPI_Comm_split_type(ParallelDescriptor::Communicator(), MPI_COMM_TYPE_SHARED, ParallelDescriptor::MyProc(), MPI_INFO_NULL, &node_comm)",
+                                                     ierr);
+            }
+            ParallelContext::push(node_comm, ParallelContext::frames.size(), 0);
+            const auto pop_node_comm = [&] () noexcept
+            {
+                ParallelContext::pop();
+                int free_ierr = MPI_Comm_free(&node_comm);
+                if (free_ierr != MPI_SUCCESS) {
+                    amrex::ParallelDescriptor::MPI_Error(__FILE__, __LINE__,
+                                                         "MPI_Comm_free(&node_comm)",
+                                                         free_ierr);
+                }
+            };
+            try {
+#endif
+                if (ParallelContext::IOProcessorSub()) {
+                    std::ifstream is(m_ml_model_file, std::ios::binary);
+                    if (!is.good()) {
+                        amrex::Abort("Error opening the TorchScript model file on node-local reader.");
+                    }
+                    is.seekg(0, std::ios::end);
+                    const std::streamoff nbytes = is.tellg();
+                    if (nbytes < 0) {
+                        amrex::Abort("Error determining TorchScript model file size on node-local reader.");
+                    }
+                    is.seekg(0, std::ios::beg);
+                    model_bytes.resize(static_cast<std::size_t>(nbytes));
+                    if (!model_bytes.empty()) {
+                        is.read(model_bytes.dataPtr(), nbytes);
+                    }
+                    if (!is.good() && !is.eof()) {
+                        amrex::Abort("Error reading the TorchScript model file on node-local reader.");
+                    }
+                }
+
+                std::uint64_t model_nbytes = model_bytes.size();
+                ParallelDescriptor::Bcast(&model_nbytes, 1,
+                                          ParallelContext::IOProcessorNumberSub(),
+                                          ParallelContext::CommunicatorSub());
+                if (!ParallelContext::IOProcessorSub()) {
+                    model_bytes.resize(static_cast<std::size_t>(model_nbytes));
+                }
+                if (model_nbytes > 0) {
+                    ParallelDescriptor::Bcast(model_bytes.dataPtr(), model_nbytes,
+                                              ParallelContext::IOProcessorNumberSub(),
+                                              ParallelContext::CommunicatorSub());
+                }
+#ifdef AMREX_USE_MPI
+                pop_node_comm();
+            } catch (...) {
+                pop_node_comm();
+                throw;
+            }
+#endif
             std::string model_blob(model_bytes.data(), model_bytes.size());
             std::istringstream model_stream(model_blob, std::ios::binary);
             m_ml_module = std::make_unique<torch::jit::script::Module>(
@@ -279,7 +344,7 @@ AmrCoreAdv::AmrCoreAdv ()
         m_ml_module->to(ml_device);
 #else
         m_ml_use_cuda = false;
-        amrex::Print() << "ML model loaded via rank-0 AMReX broadcast: "
+        amrex::Print() << "ML model loaded via node-local AMReX broadcast: "
                        << m_ml_model_file << "\n";
 #endif
 #ifdef AMREX_USE_CUDA
