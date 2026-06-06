@@ -237,6 +237,29 @@ StochasticPC::AddParticles (MultiFab& phi_fine, const BoxArray& ba_to_exclude,
                 AMREX_D_TERM( p.rdata(RealIdx::xold) = x;,
                               p.rdata(RealIdx::yold) = y;,
                               p.rdata(RealIdx::zold) = z;);
+
+#if (AMREX_SPACEDIM == 2)
+                Real orient[2] = {amrex::Random(engine), amrex::Random(engine)};
+                // between -1 and 1
+                orient[0] = Real(-1.0) + Real(2.0)*orient[0];
+                orient[1] = Real(-1.0) + Real(2.0)*orient[1];
+                Real mag = std::sqrt(orient[0]*orient[0] + orient[1]*orient[1]);
+                orient[0] = orient[0]/mag;
+                orient[1] = orient[1]/mag;
+#elif (AMREX_SPACEDIM == 3)
+                Real orient[3] = {amrex::Random(engine), amrex::Random(engine), amrex::Random(engine)};
+                // between -1 and 1
+                orient[0] = Real(-1.0) + Real(2.0)*orient[0];
+                orient[1] = Real(-1.0) + Real(2.0)*orient[1];
+                orient[2] = Real(-1.0) + Real(2.0)*orient[2];
+                Real mag = std::sqrt(orient[0]*orient[0] + orient[1]*orient[1] + orient[2]*orient[2]);
+                orient[0] = orient[0]/mag;
+                orient[1] = orient[1]/mag;
+                orient[2] = orient[2]/mag;
+#endif
+                AMREX_D_TERM( p.rdata(RealIdx::orientx) = orient[0];,
+                              p.rdata(RealIdx::orienty) = orient[1];,
+                              p.rdata(RealIdx::orientz) = orient[2];);
             }
         });
     }
@@ -369,6 +392,7 @@ StochasticPC::RefluxCrseToFine (const BoxArray& ba_to_keep, MultiFab& phi_for_re
 void
 StochasticPC::AdvectWithRandomWalk (int lev, Real dt, Real time,
                                     ExternalPotential const& external_potential,
+                                    Activity const& activity,
                                     Vector<int>& a_ensemble_dir)
 {
     BL_PROFILE("StochasticPC::AdvectWithRandomWalk");
@@ -400,9 +424,18 @@ StochasticPC::AdvectWithRandomWalk (int lev, Real dt, Real time,
                           p.rdata(RealIdx::yold) = p.pos(1);,
                           p.rdata(RealIdx::zold) = p.pos(2););
 
-            AMREX_D_TERM( Real incx = amrex::RandomNormal(amrex::Real(0.),stddev,engine);,
-                          Real incy = amrex::RandomNormal(amrex::Real(0.),stddev,engine);,
-                          Real incz = amrex::RandomNormal(amrex::Real(0.),stddev,engine););
+            Real incx, incy, incz;
+
+            if (activity.enabled) {
+                AMREX_D_TERM(incx = amrex::RandomNormal(amrex::Real(0.),stddev*sqrt(Real(2.0)*activity.D_trans),engine);,
+                             incy = amrex::RandomNormal(amrex::Real(0.),stddev*sqrt(Real(2.0)*activity.D_trans),engine);,
+                             incz = amrex::RandomNormal(amrex::Real(0.),stddev*sqrt(Real(2.0)*activity.D_trans),engine););
+            }
+            else {
+                AMREX_D_TERM(incx = amrex::RandomNormal(amrex::Real(0.),stddev,engine);,
+                             incy = amrex::RandomNormal(amrex::Real(0.),stddev,engine);,
+                             incz = amrex::RandomNormal(amrex::Real(0.),stddev,engine););
+            }
 
              if (external_potential.enabled) {
                 amrex::Real xloc = p.pos(0);
@@ -412,6 +445,22 @@ StochasticPC::AdvectWithRandomWalk (int lev, Real dt, Real time,
                     external_potential, ens_flag, 0, time, xloc, yloc);
                 p.pos(1) += -dt * external_potential_gradient_component(
                     external_potential, ens_flag, 1, time, xloc, yloc);
+             }
+
+             if (activity.enabled) {
+                 Real incx_activity, incy_activity, incz_activity;
+                 Real orientx = p.rdata(RealIdx::orientx); 
+                 Real orienty = p.rdata(RealIdx::orienty);
+                 Real orientz = p.rdata(RealIdx::orientz);
+                 active_push(activity, ens_flag, dt, 
+                             incx_activity, incy_activity, incz_activity,
+                             orientx, orienty, orientz, engine);
+                 incx += incx_activity;
+                 incy += incy_activity;
+                 incy += incz_activity;
+                 p.rdata(RealIdx::orientx) = orientx;
+                 p.rdata(RealIdx::orienty) = orienty;
+                 p.rdata(RealIdx::orientz) = orientz;
              }
 
             AMREX_D_TERM( incx = std::max(-dx[0], std::min( dx[0], incx));,

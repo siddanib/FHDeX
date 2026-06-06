@@ -24,13 +24,14 @@ alg_type = 1
 # *****************************************************************
 geometry.prob_lo     =  0.0    0.0
 geometry.prob_hi     =  1.0  2048.0
+geometry.prob_hi     =  0.1  1000.0
 geometry.is_periodic =  1    1
 bc_lo = 0 0
 bc_hi = 0 0
 
 is_ensemble_dir = 0 1
 diffusion_coefficient = 0.5
-flux_mode = gaussian
+flux_mode = ml
 ml_model_file = model.pt
 ml_history_len = 10
 ml_history_ngrow = 1
@@ -75,14 +76,15 @@ remove_hist_freq        = 2
 # `init_positions` splits the x-domain into intervals and
 # `init_particles_per_interval` sets the particle count per interval.
 # The second array must have exactly one more entry than the first.
-init_type = piecewise_x
-init_positions = 0.3 0.7
-init_particles_per_interval = 25.0 75.0 10.0
+#init_type = piecewise_x
+#init_positions = 0.3 0.7
+#init_particles_per_interval = 25.0 75.0 10.0
 
 # Diagnostics example.
 # `diag_flux_x` should map to a valid x-face on the level-0 grid and
 # `diag_x_min`/`diag_x_max` define the x-window used for reduced densities.
 diag_enable = 1
+diag_enable = 0
 diag_flux_x = 0.5
 diag_x_min = 0.25
 diag_x_max = 0.75
@@ -100,6 +102,7 @@ amr.v              = 1       # verbosity in Amr
 amr.max_grid_size_x = 32 32
 amr.max_grid_size_y = 32 32
 amr.n_cell          = 100 2048
+amr.n_cell          = 10  1000
 
 amr.max_level       = 0
 amr.use_particles   = 1      # Turn particles on or off

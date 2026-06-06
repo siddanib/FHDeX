@@ -14,6 +14,7 @@
 #include <AMReX_Vector.H>
 
 #include <ExternalPotential.H>
+#include <Activity.H>
 #include <FluxMode.H>
 #include <torch/script.h>
 
@@ -205,6 +206,7 @@ private:
     // This variable is used to modify the diffusion coefficient of SPDE
     amrex::Real m_d_spde = amrex::Real(0.5);
     ExternalPotential m_external_potential;
+    Activity m_activity;
     InitType m_init_type = InitType::uniform;
     amrex::Vector<amrex::Real> m_init_positions;
     amrex::Vector<amrex::Real> m_init_particles_per_interval;

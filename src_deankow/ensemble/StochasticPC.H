@@ -5,12 +5,15 @@
 #include <AMReX_Particles.H>
 
 #include <ExternalPotential.H>
+#include <Activity.H>
 
 struct RealIdx
 {
     enum {
         xold = 0,
         yold, zold,
+        orientx, orienty,
+        orientz,
         ncomps
     };
 };
@@ -85,6 +88,7 @@ public:
 
     void AdvectWithRandomWalk (int lev, amrex::Real dt, amrex::Real time,
                                ExternalPotential const& external_potential,
+                               Activity const& activity,
                                amrex::Vector<int>& a_ensemble_dir);
 
     void RemoveParticlesNotInBA (const amrex::BoxArray& ba_to_keep,

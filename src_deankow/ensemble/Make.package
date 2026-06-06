@@ -6,6 +6,7 @@ CEXE_sources += myfunc.cpp
 CEXE_headers += AmrCoreAdv.H 
 CEXE_headers += bc_fill.H
 CEXE_headers += ExternalPotential.H
+CEXE_headers += Activity.H
 CEXE_headers += FluxMode.H
 CEXE_headers += Kernels.H 
 CEXE_headers += Tagging.H

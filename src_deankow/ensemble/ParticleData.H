@@ -28,13 +28,15 @@ struct ParticleData {
     };
 
     void init_particle_params(int max_level, int ensemble_dir_exists,
-                              ExternalPotential const& external_potential)
+                              ExternalPotential const& external_potential,
+                              Activity const& activity)
     {
         amrex::ParmParse pp(pp_prefix);
         m_external_potential = external_potential;
+        m_activity = activity;
 
         use_particles = 0;
-        multilevel_run = 1;
+        multilevel_run = 0;
         pp.query("use_particles", use_particles);
 
         if (use_particles && ensemble_dir_exists) {
@@ -393,7 +395,7 @@ struct ParticleData {
             // **********************************************************************
             BeginFaceFluxDiagnostics(lev, dt_lev);
             stochastic_particles->AdvectWithRandomWalk(lev, dt_lev, time,
-                                        m_external_potential, m_ensemble_dir);
+                                        m_external_potential, m_activity, m_ensemble_dir);
             EndFaceFluxDiagnostics(lev, dt_lev);
 
             // **********************************************************************
@@ -506,7 +508,7 @@ struct ParticleData {
             // **********************************************************************
             BeginFaceFluxDiagnostics(lev, dt_lev);
             stochastic_particles->AdvectWithRandomWalk(lev, dt_lev, time,
-                                        m_external_potential, m_ensemble_dir);
+                                        m_external_potential, m_activity, m_ensemble_dir);
             EndFaceFluxDiagnostics(lev, dt_lev);
             // **********************************************************************
             // Put particles on the correct levels and in the right boxes
@@ -549,6 +551,7 @@ struct ParticleData {
     bool m_remove_particle_history = false;
     int m_remove_hist_freq = 1;
     ExternalPotential m_external_potential;
+    Activity m_activity;
     amrex::Real m_factor = amrex::Real(0.9);
     FaceFluxDiagnosticsConfig m_face_flux_diag;
     amrex::Vector<amrex::Real> m_particle_face_flux_profile;

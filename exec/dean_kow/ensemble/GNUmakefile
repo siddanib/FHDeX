@@ -26,7 +26,7 @@ include Make.Adv
 ifeq ($(USE_CUDA),TRUE)
   PYTORCH_ROOT ?= /path/to/libtorch_cuda
 else
-  PYTORCH_ROOT ?= /path/to/libtorch_cpu
+  PYTORCH_ROOT ?= /home/isriva/OtherPackages/libtorch_cpu
 endif
 TORCH_LIBPATH = $(PYTORCH_ROOT)/lib
 

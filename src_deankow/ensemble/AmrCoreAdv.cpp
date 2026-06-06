@@ -709,6 +709,7 @@ void AmrCoreAdv::MakeNewLevelFromScratch (int lev, Real time, const BoxArray& ba
     int Ncomp = phi_new[lev].nComp();
 
     ExternalPotential external_potential = m_external_potential;
+    Activity activity = m_activity;
 
     if (lev == 0) {
         if (m_init_type != InitType::uniform) {
@@ -1241,6 +1242,22 @@ AmrCoreAdv::ReadParameters ( amrex::Vector<int>& bc_lo, amrex::Vector<int>& bc_h
             m_external_potential.type = ExternalPotentialType::none;
         }
     }
+    
+    {
+        ParmParse pp("activity");
+
+        pp.query("exists", m_activity.enabled);
+        if (m_activity.enabled) {
+            std::string activity_type = "none";
+            pp.query("type", activity_type);
+            m_activity.type = ActivityTypeFromString(activity_type);
+            pp.query("D_trans", m_activity.D_trans);
+            pp.get("persistence_length", m_activity.persistence_length);
+            pp.get("persistence_time", m_activity.persistence_time);
+        } else {
+            m_activity.type = ActivityType::none;
+        }
+    }
 
 #ifdef AMREX_PARTICLES
         int a_ensemble_dir_exists = 0;
@@ -1252,7 +1269,7 @@ AmrCoreAdv::ReadParameters ( amrex::Vector<int>& bc_lo, amrex::Vector<int>& bc_h
                 "Ensemble mode with particles requires alg_type != 0, i.e., ncomp = 2");
         }
         particleData.init_particle_params(max_level, a_ensemble_dir_exists,
-                                          m_external_potential);
+                                          m_external_potential, m_activity);
 #endif
 }
 
@@ -1836,18 +1853,13 @@ AmrCoreAdv::WritePlotFile () const
     // Vector of MultiFabs
     Vector<MultiFab> mf(finest_level+1);
     int ncomp_mf = 2; int src_comp = 0;
-    // Check if this is an ensemble run
-    int ensemble_run = 0;
-    for (int edir : m_ensemble_dir) {
-        ensemble_run += edir;
-    }
-    if (ensemble_run) { ncomp_mf += 1;}
+    if (alg_type) { ncomp_mf += 1;}
 
     for (int lev = 0; lev <= finest_level; ++lev) {
         mf[lev].define(grids[lev], dmap[lev], ncomp_mf, 0);
         MultiFab::Copy(mf[lev],phi_new[lev],src_comp,0,1,0);
         MultiFab::Copy(mf[lev],phi_new[lev],src_comp,1,1,0);
-        if (ensemble_run) {
+        if (alg_type) {
             MultiFab::Copy(mf[lev],phi_new[lev],src_comp+1,2,1,0);
         }
 
@@ -1859,7 +1871,7 @@ AmrCoreAdv::WritePlotFile () const
 
 
     Vector<std::string> varnames = {"phi", "phi0"};
-    if (ensemble_run) {
+    if (alg_type) {
         varnames.push_back("phi1");
     }
 
