@@ -37,18 +37,18 @@ struct ParticleData {
         multilevel_run = 1;
         pp.query("use_particles", use_particles);
 
-        if (use_particles && ensemble_dir_exists) {
-            multilevel_run = 0;
+        if (use_particles) {
+            if (max_level == 0) {
+                multilevel_run = 0;
+            } else if (max_level == 1) {
+                multilevel_run = 1;
+            } else {
+                amrex::Abort("When using particles you must have max_level == 0 or max_level == 1");
+            }
         }
 
-        if (use_particles) {
-            if (max_level != 1 && multilevel_run) {
-                amrex::Abort("When using particles in multilevel mode you must have max_level == 1");
-            }
-
-            if (max_level != 0 && ensemble_dir_exists) {
-                amrex::Abort("When using particles in ensemble mode you must have max_level == 0");
-            }
+        if (ensemble_dir_exists && max_level != 0) {
+            amrex::Abort("When using particles in ensemble mode you must have max_level == 0");
         }
 
         if (ensemble_dir_exists) {
