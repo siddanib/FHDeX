@@ -566,7 +566,7 @@ void compute_flux_z_quantized (int i, int j, int k,
                    external_potential, a_d_spde, flux_mode);
     // The flux returned has the units of m^-2s^-1. Convert this to number of particles  
     int coeff_index = 0;
-    amrex::Real face_area_z = AMREX_D_TERM(dxinv,*dyinv,amrex::Real(1.)); 
+    amrex::Real face_area_z = AMREX_D_TERM(dxinv,*dyinv,*amrex::Real(1.));
     amrex::Real flux_val = fluxz(i,j,k,coeff_index);
     // Note area is inverted
     flux_val *= (dt/face_area_z);

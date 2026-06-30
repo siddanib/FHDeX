@@ -1,4 +1,4 @@
-AMREX_HOME ?= /path/to/amrex
+AMREX_HOME ?= ../../../../amrex
 
 EBASE := main
 
@@ -9,6 +9,7 @@ include $(AMREX_HOME)/Tools/GNUMake/Make.defs
 SRC_DIR = ../../../src_deankow/ensemble
 RNG_DIR = ../../../src_rng/
 COM_DIR = ../../../src_common/
+ANALYSIS_DIR = ../../../src_analysis/
 
 include $(SRC_DIR)/Make.package
 include $(SRC_DIR)/Src_K/Make.package
@@ -23,6 +24,10 @@ include $(COM_DIR)/Make.package
 INCLUDE_LOCATIONS += $(COM_DIR)
 VPATH_LOCATIONS   += $(COM_DIR)
 
+include $(ANALYSIS_DIR)/Make.package
+INCLUDE_LOCATIONS += $(ANALYSIS_DIR)
+VPATH_LOCATIONS   += $(ANALYSIS_DIR)
+
 Pdirs 	:= Base Boundary AmrCore
 ifeq ($(USE_PARTICLES),TRUE)
 Pdirs 	+= Particle
@@ -30,12 +35,23 @@ endif
 
 Ppack	+= $(foreach dir, $(Pdirs), $(AMREX_HOME)/Src/$(dir)/Make.package)
 
+include $(AMREX_HOME)/Src/FFT/Make.package
 include $(Ppack)
 
 all: $(executable)
 	@echo SUCCESS
 
 include $(AMREX_HOME)/Tools/GNUMake/Make.rules
+
+ifeq ($(findstring cgpu, $(HOST)), cgpu)
+  CXXFLAGS += $(FFTW)
+endif
+
+ifeq ($(USE_CUDA),TRUE)
+  LIBRARIES += -lcufft
+else
+  LIBRARIES += -L$(FFTW_DIR) -lfftw3_mpi -lfftw3
+endif
 
 MAXSPECIES := $(strip $(MAX_SPEC))
 DEFINES += -DMAX_SPECIES=$(MAXSPECIES)

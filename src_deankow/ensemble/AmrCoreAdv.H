@@ -15,6 +15,7 @@
 
 #include <ExternalPotential.H>
 #include <FluxMode.H>
+#include <StructFact.H>
 #include <torch/script.h>
 
 #include <limits>
@@ -153,6 +154,13 @@ public:
 private:
     void WriteStepDiagnostics (int lev, amrex::Real time);
     [[nodiscard]] int MapPhysicalXToFaceIndex (amrex::Geometry const& geom, amrex::Real x) const;
+    void ValidateStructureFactorMode ();
+    void InitStructureFactor ();
+    void SampleStructureFactor (amrex::Real time);
+    void WriteStructureFactor (amrex::Real time);
+    [[nodiscard]] bool StructureFactorEnabled () const;
+    [[nodiscard]] bool StructureFactorSamplesThisStep (int step) const;
+    [[nodiscard]] bool StructureFactorWritesThisStep (int step) const;
 
     ////////////////
     // private data members
@@ -260,6 +268,25 @@ private:
     // checkpoint prefix and frequency
     std::string chk_file {"chk"};
     int chk_int = -1;
+
+    // structure factor analysis
+    int struct_fact_int = -1;
+    int n_steps_skip = 0;
+    int do_1D = 0;
+    std::string sf_mode;
+    std::string sf_plot_file {"plt_SF_density"};
+    int sf_zero_avg = 1;
+    bool m_sf_use_spde = false;
+    bool m_sf_use_particle = false;
+    bool m_sf_initialized = false;
+    int m_sf_sample_count = 0;
+    int m_sf_npencils = 0;
+    amrex::BoxArray m_sf_pencil_ba;
+    amrex::DistributionMapping m_sf_pencil_dmap;
+    StructFact m_sf_spde;
+    StructFact m_sf_particle;
+    amrex::Vector<std::unique_ptr<StructFact>> m_sf_spde_pencils;
+    amrex::Vector<std::unique_ptr<StructFact>> m_sf_particle_pencils;
 
     struct DiagnosticsConfig {
         bool enabled = false;
