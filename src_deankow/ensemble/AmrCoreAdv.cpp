@@ -16,6 +16,8 @@
 #endif
 
 #include <AmrCoreAdv.H>
+#include <IntermediateScatteringFunction.H>
+#include <StructureFactorAnalysis.H>
 #include <Kernels.H>
 #include <mykernel.H>
 #include "chrono"
@@ -26,6 +28,7 @@
 #include <iomanip>
 #include <sstream>
 #include <type_traits>
+#include <utility>
 
 using namespace amrex;
 using namespace std::chrono;
@@ -126,368 +129,6 @@ void ComputeReducedDensitiesImpl (
 }
 
 
-void CopyDensityComponentImpl (amrex::MultiFab const& src, amrex::MultiFab& dst, int src_comp)
-{
-    dst.define(src.boxArray(), src.DistributionMap(), 1, 0);
-    amrex::MultiFab::Copy(dst, src, src_comp, 0, 1, 0);
-}
-
-void ExtractXPencilImpl (amrex::MultiFab const& mf, amrex::MultiFab& mf_pencil,
-                         int pencily, int pencilz)
-{
-    amrex::Box domain(mf.boxArray().minimalBox());
-    amrex::IntVect dom_lo(domain.loVect());
-    amrex::IntVect dom_hi(domain.hiVect());
-
-#if (AMREX_SPACEDIM > 1)
-    dom_lo[1] = dom_hi[1] = pencily;
-#else
-    amrex::ignore_unused(pencily);
-#endif
-#if (AMREX_SPACEDIM > 2)
-    dom_lo[2] = dom_hi[2] = pencilz;
-#else
-    amrex::ignore_unused(pencilz);
-#endif
-
-    amrex::Box domain_pencil(dom_lo, dom_hi);
-    amrex::BoxArray ba_pencil(domain_pencil);
-    amrex::DistributionMapping dmap_pencil(ba_pencil);
-    amrex::MultiFab mf_pencil_tmp(ba_pencil, dmap_pencil, 1, 0);
-    mf_pencil_tmp.ParallelCopy(mf, 0, 0, 1);
-
-#if (AMREX_SPACEDIM > 1)
-    dom_lo[1] = dom_hi[1] = 0;
-#endif
-#if (AMREX_SPACEDIM > 2)
-    dom_lo[2] = dom_hi[2] = 0;
-#endif
-
-    amrex::Box domain_pencil_zeroed(dom_lo, dom_hi);
-    amrex::BoxArray ba_pencil_zeroed(domain_pencil_zeroed);
-    mf_pencil.define(ba_pencil_zeroed, dmap_pencil, 1, 0);
-
-    for (amrex::MFIter mfi(mf_pencil_tmp, amrex::TilingIfNotGPU()); mfi.isValid(); ++mfi) {
-        const amrex::Box& bx = mfi.tilebox();
-        auto const& pencil = mf_pencil.array(mfi);
-        auto const& pencil_tmp = mf_pencil_tmp.const_array(mfi);
-
-        amrex::ParallelFor(bx, [=] AMREX_GPU_DEVICE (int i, int j, int k) noexcept
-        {
-            pencil(i, 0, 0) = pencil_tmp(i, j, k);
-        });
-    }
-}
-
-amrex::Geometry MakeXPencilSFGeometry (amrex::Box const& domain_pencil)
-{
-    amrex::Vector<int> is_periodic(AMREX_SPACEDIM, 1);
-    amrex::Vector<amrex::Real> projected_lo(AMREX_SPACEDIM, amrex::Real(-0.5));
-    amrex::Vector<amrex::Real> projected_hi(AMREX_SPACEDIM, amrex::Real(0.5));
-
-    projected_lo[0] = -domain_pencil.length(0) / 2 - amrex::Real(0.5);
-    projected_hi[0] =  domain_pencil.length(0) / 2 - amrex::Real(1.0) + amrex::Real(0.5);
-
-    amrex::RealBox real_box_pencil({AMREX_D_DECL(projected_lo[0], projected_lo[1], projected_lo[2])},
-                                   {AMREX_D_DECL(projected_hi[0], projected_hi[1], projected_hi[2])});
-
-    amrex::Geometry geom;
-    geom.define(domain_pencil, &real_box_pencil, amrex::CoordSys::cartesian, is_periodic.data());
-    return geom;
-}
-
-void WritePlotFilesSF1DImpl (amrex::MultiFab const& mag, amrex::MultiFab const& realimag,
-                             int step, amrex::Real time,
-                             amrex::Vector<std::string> const& names,
-                             std::string const& plotfile_base)
-{
-    const amrex::Geometry geom = MakeXPencilSFGeometry(mag.boxArray().minimalBox());
-
-    amrex::Vector<std::string> var_names(names.size());
-    for (int n = 0; n < names.size(); ++n) {
-        var_names[n] = names[n];
-    }
-
-    std::string name = plotfile_base + "_mag";
-    amrex::WriteSingleLevelPlotfile(amrex::Concatenate(name, step, 9),
-                                    mag, var_names, geom, time, step);
-
-    var_names.resize(2 * names.size());
-    int cnt = 0;
-    for (int n = 0; n < names.size(); ++n) {
-        var_names[cnt] = names[n] + "_real";
-        ++cnt;
-    }
-    for (int n = 0; n < names.size(); ++n) {
-        var_names[cnt] = names[n] + "_imag";
-        ++cnt;
-    }
-
-    name = plotfile_base + "_real_imag";
-    amrex::WriteSingleLevelPlotfile(amrex::Concatenate(name, step, 9),
-                                    realimag, var_names, geom, time, step);
-}
-
-}
-
-bool
-AmrCoreAdv::StructureFactorEnabled () const
-{
-    return struct_fact_int > 0;
-}
-
-bool
-AmrCoreAdv::StructureFactorSamplesThisStep (int step) const
-{
-    return StructureFactorEnabled() &&
-           step > n_steps_skip &&
-           step % struct_fact_int == 0;
-}
-
-bool
-AmrCoreAdv::StructureFactorWritesThisStep (int step) const
-{
-    return StructureFactorEnabled() &&
-           m_sf_sample_count > 0 &&
-           plot_int > 0 &&
-           step > n_steps_skip &&
-           step % plot_int == 0;
-}
-
-void
-AmrCoreAdv::ValidateStructureFactorMode ()
-{
-    m_sf_use_spde = false;
-    m_sf_use_particle = false;
-
-    if (!StructureFactorEnabled()) {
-        return;
-    }
-
-    if (max_level != 0) {
-        amrex::Abort("Structure-factor analysis currently requires amr.max_level = 0.");
-    }
-    if (do_1D != 0 && do_1D != 1) {
-        amrex::Abort("do_1D must be 0 or 1 for structure-factor analysis.");
-    }
-    if (n_steps_skip < 0) {
-        amrex::Abort("n_steps_skip must be >= 0 for ensemble structure-factor accumulation.");
-    }
-    if (sf_zero_avg != 0 && sf_zero_avg != 1) {
-        amrex::Abort("sf_zero_avg must be 0 or 1.");
-    }
-    if (do_1D == 1 && Geom(0).Domain().length(0) <= 1) {
-        amrex::Abort("do_1D structure-factor analysis requires more than one x cell.");
-    }
-
-    bool particles_enabled = false;
-#ifdef AMREX_PARTICLES
-    particles_enabled = particleData.UsingParticles();
-#endif
-
-    if (sf_mode.empty()) {
-        sf_mode = particles_enabled ? "both" : "spde";
-    }
-
-    if (sf_mode == "spde") {
-        m_sf_use_spde = true;
-    } else if (sf_mode == "particle") {
-        m_sf_use_particle = true;
-    } else if (sf_mode == "both") {
-        m_sf_use_spde = true;
-        m_sf_use_particle = true;
-    } else {
-        amrex::Abort("sf_mode must be spde, particle, or both.");
-    }
-
-    if (m_sf_use_particle) {
-#ifndef AMREX_PARTICLES
-        amrex::Abort("sf_mode=particle or both requires particle support.");
-#else
-        if (!particles_enabled) {
-            amrex::Abort("sf_mode=particle or both requires amr.use_particles = 1.");
-        }
-#endif
-        if (alg_type == 0) {
-            amrex::Abort("sf_mode=particle or both requires alg_type != 0 so density component 1 is available.");
-        }
-    }
-}
-
-void
-AmrCoreAdv::InitStructureFactor ()
-{
-    if (!StructureFactorEnabled() || m_sf_initialized) {
-        return;
-    }
-
-    if (phi_new[0].nComp() < 1) {
-        amrex::Abort("SPDE density component 0 is unavailable for structure-factor analysis.");
-    }
-    if (m_sf_use_particle && phi_new[0].nComp() < 2) {
-        amrex::Abort("Particle density component 1 is unavailable for structure-factor analysis.");
-    }
-
-    const amrex::Real* dx = geom[0].CellSize();
-    amrex::Real cell_volume = dx[0];
-#if (AMREX_SPACEDIM > 1)
-    cell_volume *= dx[1];
-#endif
-#if (AMREX_SPACEDIM > 2)
-    cell_volume *= dx[2];
-#endif
-
-    amrex::Vector<std::string> spde_names {"spde_rho"};
-    amrex::Vector<std::string> particle_names {"particle_rho"};
-    amrex::Vector<amrex::Real> var_scaling {cell_volume};
-
-    if (do_1D == 0) {
-        if (m_sf_use_spde) {
-            m_sf_spde.define(grids[0], dmap[0], spde_names, var_scaling);
-        }
-        if (m_sf_use_particle) {
-            m_sf_particle.define(grids[0], dmap[0], particle_names, var_scaling);
-        }
-    } else {
-        amrex::MultiFab sample_density;
-        CopyDensityComponentImpl(phi_new[0], sample_density, 0);
-        amrex::MultiFab sample_pencil;
-        ExtractXPencilImpl(sample_density, sample_pencil,
-                           Geom(0).Domain().smallEnd(AMREX_SPACEDIM > 1 ? 1 : 0),
-                           Geom(0).Domain().smallEnd(AMREX_SPACEDIM > 2 ? 2 : 0));
-        m_sf_pencil_ba = sample_pencil.boxArray();
-        m_sf_pencil_dmap = sample_pencil.DistributionMap();
-
-        const amrex::Box& domain = Geom(0).Domain();
-        m_sf_npencils = 1;
-#if (AMREX_SPACEDIM > 1)
-        m_sf_npencils *= domain.length(1);
-#endif
-#if (AMREX_SPACEDIM > 2)
-        m_sf_npencils *= domain.length(2);
-#endif
-
-        if (m_sf_use_spde) {
-            m_sf_spde_pencils.resize(m_sf_npencils);
-            for (int i = 0; i < m_sf_npencils; ++i) {
-                m_sf_spde_pencils[i] = std::make_unique<StructFact>();
-                m_sf_spde_pencils[i]->define(m_sf_pencil_ba, m_sf_pencil_dmap, spde_names, var_scaling);
-            }
-        }
-        if (m_sf_use_particle) {
-            m_sf_particle_pencils.resize(m_sf_npencils);
-            for (int i = 0; i < m_sf_npencils; ++i) {
-                m_sf_particle_pencils[i] = std::make_unique<StructFact>();
-                m_sf_particle_pencils[i]->define(m_sf_pencil_ba, m_sf_pencil_dmap, particle_names, var_scaling);
-            }
-        }
-    }
-
-    m_sf_initialized = true;
-}
-
-void
-AmrCoreAdv::SampleStructureFactor (amrex::Real time)
-{
-    amrex::ignore_unused(time);
-    InitStructureFactor();
-
-    amrex::MultiFab spde_density;
-    amrex::MultiFab particle_density;
-    if (m_sf_use_spde) {
-        CopyDensityComponentImpl(phi_new[0], spde_density, 0);
-    }
-    if (m_sf_use_particle) {
-        CopyDensityComponentImpl(phi_new[0], particle_density, 1);
-    }
-
-    if (do_1D == 0) {
-        if (m_sf_use_spde) { m_sf_spde.FortStructure(spde_density); }
-        if (m_sf_use_particle) { m_sf_particle.FortStructure(particle_density); }
-    } else {
-        const amrex::Box& domain = Geom(0).Domain();
-#if (AMREX_SPACEDIM > 1)
-        const int ylo = domain.smallEnd(1);
-        const int ny = domain.length(1);
-#else
-        const int ylo = 0;
-        const int ny = 1;
-#endif
-#if (AMREX_SPACEDIM > 2)
-        const int zlo = domain.smallEnd(2);
-#else
-        const int zlo = 0;
-#endif
-
-        for (int p = 0; p < m_sf_npencils; ++p) {
-            const int pencily = ylo + p % ny;
-            const int pencilz = zlo + p / ny;
-            if (m_sf_use_spde) {
-                amrex::MultiFab pencil;
-                ExtractXPencilImpl(spde_density, pencil, pencily, pencilz);
-                m_sf_spde_pencils[p]->FortStructure(pencil);
-            }
-            if (m_sf_use_particle) {
-                amrex::MultiFab pencil;
-                ExtractXPencilImpl(particle_density, pencil, pencily, pencilz);
-                m_sf_particle_pencils[p]->FortStructure(pencil);
-            }
-        }
-    }
-
-    ++m_sf_sample_count;
-}
-
-void
-AmrCoreAdv::WriteStructureFactor (amrex::Real time)
-{
-    if (!m_sf_initialized || m_sf_sample_count == 0) {
-        return;
-    }
-
-    const int step = istep[0];
-    const std::string spde_base = sf_plot_file + "_spde_rho" + (do_1D ? "_1D" : "");
-    const std::string particle_base = sf_plot_file + "_particle_rho" + (do_1D ? "_1D" : "");
-
-    if (do_1D == 0) {
-        if (m_sf_use_spde) {
-            m_sf_spde.WritePlotFile(step, time, spde_base, sf_zero_avg);
-        }
-        if (m_sf_use_particle) {
-            m_sf_particle.WritePlotFile(step, time, particle_base, sf_zero_avg);
-        }
-        return;
-    }
-
-    auto write_averaged = [&] (amrex::Vector<std::unique_ptr<StructFact>>& pencils,
-                               std::string const& base)
-    {
-        if (pencils.empty()) {
-            return;
-        }
-
-        amrex::MultiFab mag(m_sf_pencil_ba, m_sf_pencil_dmap, pencils[0]->get_ncov(), 0);
-        amrex::MultiFab realimag(m_sf_pencil_ba, m_sf_pencil_dmap, 2 * pencils[0]->get_ncov(), 0);
-        mag.setVal(amrex::Real(0.0));
-        realimag.setVal(amrex::Real(0.0));
-
-        for (auto& sf : pencils) {
-            sf->AddToExternal(mag, realimag, sf_zero_avg);
-        }
-
-        const amrex::Real inv_npencils = amrex::Real(1.0) / static_cast<amrex::Real>(m_sf_npencils);
-        mag.mult(inv_npencils);
-        realimag.mult(inv_npencils);
-
-        WritePlotFilesSF1DImpl(mag, realimag, step, time, pencils[0]->get_names(), base);
-    };
-
-    if (m_sf_use_spde) {
-        write_averaged(m_sf_spde_pencils, spde_base);
-    }
-    if (m_sf_use_particle) {
-        write_averaged(m_sf_particle_pencils, particle_base);
-    }
 }
 
 // constructor - reads in parameters from inputs file
@@ -495,6 +136,9 @@ AmrCoreAdv::WriteStructureFactor (amrex::Real time)
 //             - initializes BCRe boundary condition object
 AmrCoreAdv::AmrCoreAdv ()
 {
+    m_structure_factor = std::make_unique<StructureFactorAnalysis>();
+    m_intermediate_scattering = std::make_unique<IntermediateScatteringFunction>();
+
 
     // periodic boundaries
     //int bc_lo[] = {BCType::int_dir, BCType::int_dir, BCType::int_dir};
@@ -741,6 +385,11 @@ AmrCoreAdv::AmrCoreAdv ()
     }
 }
 
+AmrCoreAdv::AmrCoreAdv (AmrCoreAdv&& rhs) noexcept = default;
+
+AmrCoreAdv&
+AmrCoreAdv::operator= (AmrCoreAdv&& rhs) noexcept = default;
+
 AmrCoreAdv::~AmrCoreAdv () = default;
 
 // advance solution to final time
@@ -749,12 +398,18 @@ AmrCoreAdv::Evolve ()
 {
     Real cur_time = t_new[0];
     int last_plot_file_step = 0;
+    bool sampled_initial_isf_state = false;
 
     for (int step = istep[0]; step < max_step && cur_time < stop_time; ++step)
     {
         amrex::Print() << "\nCoarse STEP " << step+1 << " starts ..." << std::endl;
 
         ComputeDt();
+
+        if (!sampled_initial_isf_state && m_intermediate_scattering->SamplesThisStep(istep[0])) {
+            m_intermediate_scattering->Sample(istep[0], cur_time, phi_new[0], Geom(0), dt[0]);
+            sampled_initial_isf_state = true;
+        }
 
         int lev = 0;
         int iteration = 1;
@@ -798,13 +453,17 @@ AmrCoreAdv::Evolve ()
 
         // structure factor
         const int next_step = step + 1;
-        if (StructureFactorEnabled()) {
-            if (StructureFactorSamplesThisStep(next_step)) {
-                SampleStructureFactor(cur_time);
+        if (m_structure_factor->Enabled()) {
+            if (m_structure_factor->SamplesThisStep(next_step)) {
+                m_structure_factor->Sample(phi_new[0], Geom(0));
             }
-            if (StructureFactorWritesThisStep(next_step)) {
-                WriteStructureFactor(cur_time);
+            if (m_structure_factor->WritesThisStep(next_step, plot_int)) {
+                m_structure_factor->Write(istep[0], cur_time);
             }
+        }
+
+        if (m_intermediate_scattering->SamplesThisStep(next_step)) {
+            m_intermediate_scattering->Sample(next_step, cur_time, phi_new[0], Geom(0), dt[0]);
         }
 
 #ifdef AMREX_MEM_PROFILING
@@ -820,6 +479,10 @@ AmrCoreAdv::Evolve ()
 
     if (plot_int > 0 && istep[0] > last_plot_file_step) {
         WritePlotFile();
+    }
+
+    if (m_intermediate_scattering->Enabled()) {
+        m_intermediate_scattering->Write(Geom(0));
     }
 }
 
@@ -1554,16 +1217,8 @@ AmrCoreAdv::ReadParameters ( amrex::Vector<int>& bc_lo, amrex::Vector<int>& bc_h
         pp.query("diag_x_max", m_diag.x_max);
         pp.query("diag_file", m_diag.file);
 
-        int legacy_struct_fact_int = struct_fact_int;
-        const bool have_struct_fact_int = pp.query("struct_fact_int", struct_fact_int);
-        if (!have_struct_fact_int && pp.query("struc_fact_int", legacy_struct_fact_int)) {
-            struct_fact_int = legacy_struct_fact_int;
-        }
-        pp.query("n_steps_skip", n_steps_skip);
-        pp.query("sf_mode", sf_mode);
-        pp.query("do_1D", do_1D);
-        pp.query("sf_plot_file", sf_plot_file);
-        pp.query("sf_zero_avg", sf_zero_avg);
+        m_structure_factor->ReadParameters(pp);
+        m_intermediate_scattering->ReadParameters(pp);
 
         // read in BC; see Src/Base/AMReX_BC_TYPES.H for supported types
         pp.queryarr("bc_lo", bc_lo);
@@ -1640,7 +1295,14 @@ AmrCoreAdv::ReadParameters ( amrex::Vector<int>& bc_lo, amrex::Vector<int>& bc_h
                                           m_external_potential);
 #endif
 
-    ValidateStructureFactorMode();
+    bool particles_enabled = false;
+#ifdef AMREX_PARTICLES
+    particles_enabled = particleData.UsingParticles();
+#endif
+    m_structure_factor->Validate(max_level, alg_type, particles_enabled, Geom(0));
+    m_intermediate_scattering->Validate(max_level, alg_type, particles_enabled, Geom(0),
+                                        m_structure_factor->Do1D(),
+                                        m_structure_factor->Mode());
 }
 
 void
