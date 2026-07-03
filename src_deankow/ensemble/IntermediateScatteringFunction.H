@@ -9,11 +9,17 @@
 #include <StructFact.H>
 
 #include <deque>
+#include <memory>
 #include <string>
+
+class IntermediateScatteringBatchedPencilModes;
 
 class IntermediateScatteringFunction
 {
 public:
+    IntermediateScatteringFunction();
+    ~IntermediateScatteringFunction();
+
     void ReadParameters (amrex::ParmParse& pp);
     void Validate (int max_level, int alg_type, bool particles_enabled,
                    amrex::Geometry const& geom, int default_do_1D,
@@ -44,7 +50,8 @@ private:
     };
 
     void Init (amrex::MultiFab const& phi, amrex::Geometry const& geom, amrex::Real dt);
-    void ExtractSourceModes (amrex::MultiFab const& density, amrex::Geometry const& geom,
+    void ExtractSourceModes (amrex::MultiFab const& phi, amrex::Geometry const& geom,
+                             int src_comp,
                              amrex::Vector<amrex::Real>& real,
                              amrex::Vector<amrex::Real>& imag);
     void AccumulateSource (SourceState& state,
@@ -71,7 +78,7 @@ private:
     amrex::Real m_product_scaling = amrex::Real(1.0);
     amrex::Vector<int> m_q_indices;
     StructFact m_fft_full;
-    StructFact m_fft_pencil;
+    std::unique_ptr<IntermediateScatteringBatchedPencilModes> m_pencil_modes;
     SourceState m_spde;
     SourceState m_particle;
 };

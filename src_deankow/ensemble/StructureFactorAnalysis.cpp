@@ -3,6 +3,136 @@
 #include <SpectralAnalysisUtils.H>
 
 #include <AMReX.H>
+#include <AMReX_FFT.H>
+#include <AMReX_GpuAtomic.H>
+#include <AMReX_GpuContainers.H>
+#include <AMReX_ParallelDescriptor.H>
+
+struct StructureFactorBatchedPencilSF
+{
+    using FFT = amrex::FFT::R2C<amrex::Real, amrex::FFT::Direction::forward>;
+    using SpectralMF = amrex::FabArray<amrex::BaseFab<amrex::GpuComplex<amrex::Real>>>;
+
+    int nx = 0;
+    int npencils = 1;
+    amrex::Real cell_volume = amrex::Real(1.0);
+    amrex::Vector<std::string> names;
+    std::unique_ptr<FFT> fft;
+    SpectralMF spectral;
+    amrex::Gpu::DeviceVector<amrex::Real> mode_sum;
+    amrex::Gpu::DeviceVector<amrex::Real> plot_values;
+    amrex::Vector<amrex::Real> host_mode_sum;
+    amrex::Vector<amrex::Real> running_sum;
+
+    void define (amrex::Geometry const& geom, std::string const& var_name,
+                 amrex::Real cell_volume_in, int npencils_in)
+    {
+        nx = geom.Domain().length(0);
+        npencils = npencils_in;
+        cell_volume = cell_volume_in;
+        names = {"struct_fact_" + var_name + "_" + var_name};
+
+        amrex::FFT::Info info;
+        info.setOneDMode(true);
+        fft = std::make_unique<FFT>(geom.Domain(), info);
+        auto layout = fft->getSpectralDataLayout();
+        spectral.define(layout.first, layout.second, 1, 0);
+
+        mode_sum.resize(nx);
+        plot_values.resize(nx);
+        host_mode_sum.assign(nx, amrex::Real(0.0));
+        running_sum.assign(nx, amrex::Real(0.0));
+    }
+
+    void sample (amrex::MultiFab const& phi, int src_comp)
+    {
+        BL_PROFILE("StructureFactorBatchedPencilSF::sample");
+
+        amrex::Real* mode_sum_ptr = mode_sum.dataPtr();
+        amrex::ParallelFor(nx, [=] AMREX_GPU_DEVICE (int i) noexcept
+        {
+            mode_sum_ptr[i] = amrex::Real(0.0);
+        });
+
+        fft->forward(phi, spectral, src_comp, 0);
+
+        const int nx_local = nx;
+        const amrex::Real inv_nx = amrex::Real(1.0) / static_cast<amrex::Real>(nx);
+        for (amrex::MFIter mfi(spectral, amrex::TilingIfNotGPU()); mfi.isValid(); ++mfi) {
+            const amrex::Box& bx = mfi.tilebox();
+            auto const& spec = spectral.const_array(mfi);
+
+            amrex::ParallelFor(bx, [=] AMREX_GPU_DEVICE (int i, int j, int k) noexcept
+            {
+                const auto z = spec(i,j,k,0);
+                const amrex::Real power = (z.real()*z.real() + z.imag()*z.imag()) * inv_nx;
+                amrex::Gpu::Atomic::AddNoRet(&mode_sum_ptr[i], power);
+
+                const int mirror = nx_local - i;
+                if (i > 0 && mirror != i) {
+                    amrex::Gpu::Atomic::AddNoRet(&mode_sum_ptr[mirror], power);
+                }
+            });
+        }
+
+        amrex::Gpu::streamSynchronize();
+        amrex::Gpu::copy(amrex::Gpu::deviceToHost, mode_sum.begin(), mode_sum.end(),
+                         host_mode_sum.begin());
+        amrex::Gpu::streamSynchronize();
+        amrex::ParallelDescriptor::ReduceRealSum(host_mode_sum.data(), nx);
+
+        for (int i = 0; i < nx; ++i) {
+            running_sum[i] += host_mode_sum[i];
+        }
+    }
+
+    void write (amrex::BoxArray const& ba, amrex::DistributionMapping const& dm,
+                int sample_count, int zero_avg, int step, amrex::Real time,
+                std::string const& base)
+    {
+        BL_PROFILE("StructureFactorBatchedPencilSF::write");
+
+        amrex::MultiFab mag(ba, dm, 1, 0);
+        amrex::MultiFab realimag(ba, dm, 2, 0);
+        mag.setVal(amrex::Real(0.0));
+        realimag.setVal(amrex::Real(0.0));
+
+        amrex::Vector<amrex::Real> shifted(nx, amrex::Real(0.0));
+        const int nxh = nx / 2;
+        const amrex::Real scale = cell_volume /
+            (static_cast<amrex::Real>(sample_count) * static_cast<amrex::Real>(npencils));
+        for (int out = 0; out < nx; ++out) {
+            const int src = (out - nxh + nx) % nx;
+            shifted[out] = (zero_avg == 1 && src == 0) ? amrex::Real(0.0) : running_sum[src] * scale;
+        }
+
+        amrex::Gpu::copy(amrex::Gpu::hostToDevice, shifted.begin(), shifted.end(),
+                         plot_values.begin());
+        amrex::Real const* plot_ptr = plot_values.dataPtr();
+        const int xlo = ba.minimalBox().smallEnd(0);
+
+        for (amrex::MFIter mfi(mag, amrex::TilingIfNotGPU()); mfi.isValid(); ++mfi) {
+            const amrex::Box& bx = mfi.tilebox();
+            auto const& mag_arr = mag.array(mfi);
+            auto const& realimag_arr = realimag.array(mfi);
+
+            amrex::ParallelFor(bx, [=] AMREX_GPU_DEVICE (int i, int j, int k) noexcept
+            {
+                const amrex::Real value = plot_ptr[i - xlo];
+                mag_arr(i,j,k,0) = value >= amrex::Real(0.0) ? value : -value;
+                realimag_arr(i,j,k,0) = value;
+                realimag_arr(i,j,k,1) = amrex::Real(0.0);
+            });
+        }
+        amrex::Gpu::streamSynchronize();
+
+        SpectralAnalysis::WritePlotFilesSF1D(mag, realimag, step, time, names, base);
+    }
+};
+
+StructureFactorAnalysis::StructureFactorAnalysis() = default;
+
+StructureFactorAnalysis::~StructureFactorAnalysis() = default;
 
 void
 StructureFactorAnalysis::ReadParameters (amrex::ParmParse& pp)
@@ -134,16 +264,18 @@ StructureFactorAnalysis::Init (amrex::MultiFab const& phi, amrex::Geometry const
             m_particle.define(phi.boxArray(), phi.DistributionMap(), particle_names, var_scaling);
         }
     } else {
-        amrex::MultiFab sample_density;
-        SpectralAnalysis::CopyDensityComponent(phi, sample_density, 0);
-        amrex::MultiFab sample_pencil;
-        SpectralAnalysis::ExtractXPencil(sample_density, sample_pencil,
-                                         geom.Domain().smallEnd(AMREX_SPACEDIM > 1 ? 1 : 0),
-                                         geom.Domain().smallEnd(AMREX_SPACEDIM > 2 ? 2 : 0));
-        m_pencil_ba = sample_pencil.boxArray();
-        m_pencil_dmap = sample_pencil.DistributionMap();
-
         const amrex::Box& domain = geom.Domain();
+        amrex::IntVect pencil_lo(domain.loVect());
+        amrex::IntVect pencil_hi(domain.hiVect());
+#if (AMREX_SPACEDIM > 1)
+        pencil_lo[1] = pencil_hi[1] = 0;
+#endif
+#if (AMREX_SPACEDIM > 2)
+        pencil_lo[2] = pencil_hi[2] = 0;
+#endif
+        m_pencil_ba.define(amrex::Box(pencil_lo, pencil_hi));
+        m_pencil_dmap = amrex::DistributionMapping(m_pencil_ba);
+
         m_npencils = 1;
 #if (AMREX_SPACEDIM > 1)
         m_npencils *= domain.length(1);
@@ -153,18 +285,12 @@ StructureFactorAnalysis::Init (amrex::MultiFab const& phi, amrex::Geometry const
 #endif
 
         if (m_use_spde) {
-            m_spde_pencils.resize(m_npencils);
-            for (int i = 0; i < m_npencils; ++i) {
-                m_spde_pencils[i] = std::make_unique<StructFact>();
-                m_spde_pencils[i]->define(m_pencil_ba, m_pencil_dmap, spde_names, var_scaling);
-            }
+            m_spde_pencils = std::make_unique<StructureFactorBatchedPencilSF>();
+            m_spde_pencils->define(geom, spde_names[0], cell_volume, m_npencils);
         }
         if (m_use_particle) {
-            m_particle_pencils.resize(m_npencils);
-            for (int i = 0; i < m_npencils; ++i) {
-                m_particle_pencils[i] = std::make_unique<StructFact>();
-                m_particle_pencils[i]->define(m_pencil_ba, m_pencil_dmap, particle_names, var_scaling);
-            }
+            m_particle_pencils = std::make_unique<StructureFactorBatchedPencilSF>();
+            m_particle_pencils->define(geom, particle_names[0], cell_volume, m_npencils);
         }
     }
 
@@ -176,46 +302,23 @@ StructureFactorAnalysis::Sample (amrex::MultiFab const& phi, amrex::Geometry con
 {
     Init(phi, geom);
 
-    amrex::MultiFab spde_density;
-    amrex::MultiFab particle_density;
-    if (m_use_spde) {
-        SpectralAnalysis::CopyDensityComponent(phi, spde_density, 0);
-    }
-    if (m_use_particle) {
-        SpectralAnalysis::CopyDensityComponent(phi, particle_density, 1);
-    }
-
     if (m_do_1D == 0) {
-        if (m_use_spde) { m_spde.FortStructure(spde_density); }
-        if (m_use_particle) { m_particle.FortStructure(particle_density); }
+        amrex::MultiFab spde_density;
+        amrex::MultiFab particle_density;
+        if (m_use_spde) {
+            SpectralAnalysis::CopyDensityComponent(phi, spde_density, 0);
+            m_spde.FortStructure(spde_density);
+        }
+        if (m_use_particle) {
+            SpectralAnalysis::CopyDensityComponent(phi, particle_density, 1);
+            m_particle.FortStructure(particle_density);
+        }
     } else {
-        const amrex::Box& domain = geom.Domain();
-#if (AMREX_SPACEDIM > 1)
-        const int ylo = domain.smallEnd(1);
-        const int ny = domain.length(1);
-#else
-        const int ylo = 0;
-        const int ny = 1;
-#endif
-#if (AMREX_SPACEDIM > 2)
-        const int zlo = domain.smallEnd(2);
-#else
-        const int zlo = 0;
-#endif
-
-        for (int p = 0; p < m_npencils; ++p) {
-            const int pencily = ylo + p % ny;
-            const int pencilz = zlo + p / ny;
-            if (m_use_spde) {
-                amrex::MultiFab pencil;
-                SpectralAnalysis::ExtractXPencil(spde_density, pencil, pencily, pencilz);
-                m_spde_pencils[p]->FortStructure(pencil);
-            }
-            if (m_use_particle) {
-                amrex::MultiFab pencil;
-                SpectralAnalysis::ExtractXPencil(particle_density, pencil, pencily, pencilz);
-                m_particle_pencils[p]->FortStructure(pencil);
-            }
+        if (m_use_spde) {
+            m_spde_pencils->sample(phi, 0);
+        }
+        if (m_use_particle) {
+            m_particle_pencils->sample(phi, 1);
         }
     }
 
@@ -242,33 +345,12 @@ StructureFactorAnalysis::Write (int step, amrex::Real time)
         return;
     }
 
-    auto write_averaged = [&] (amrex::Vector<std::unique_ptr<StructFact>>& pencils,
-                               std::string const& base)
-    {
-        if (pencils.empty()) {
-            return;
-        }
-
-        amrex::MultiFab mag(m_pencil_ba, m_pencil_dmap, pencils[0]->get_ncov(), 0);
-        amrex::MultiFab realimag(m_pencil_ba, m_pencil_dmap, 2 * pencils[0]->get_ncov(), 0);
-        mag.setVal(amrex::Real(0.0));
-        realimag.setVal(amrex::Real(0.0));
-
-        for (auto& sf : pencils) {
-            sf->AddToExternal(mag, realimag, m_zero_avg);
-        }
-
-        const amrex::Real inv_npencils = amrex::Real(1.0) / static_cast<amrex::Real>(m_npencils);
-        mag.mult(inv_npencils);
-        realimag.mult(inv_npencils);
-
-        SpectralAnalysis::WritePlotFilesSF1D(mag, realimag, step, time, pencils[0]->get_names(), base);
-    };
-
     if (m_use_spde) {
-        write_averaged(m_spde_pencils, spde_base);
+        m_spde_pencils->write(m_pencil_ba, m_pencil_dmap, m_sample_count,
+                              m_zero_avg, step, time, spde_base);
     }
     if (m_use_particle) {
-        write_averaged(m_particle_pencils, particle_base);
+        m_particle_pencils->write(m_pencil_ba, m_pencil_dmap, m_sample_count,
+                                  m_zero_avg, step, time, particle_base);
     }
 }

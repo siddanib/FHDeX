@@ -13,9 +13,14 @@
 #include <memory>
 #include <string>
 
+class StructureFactorBatchedPencilSF;
+
 class StructureFactorAnalysis
 {
 public:
+    StructureFactorAnalysis();
+    ~StructureFactorAnalysis();
+
     void ReadParameters (amrex::ParmParse& pp);
     void Validate (int max_level, int alg_type, bool particles_enabled,
                    amrex::Geometry const& geom);
@@ -48,8 +53,8 @@ private:
     amrex::DistributionMapping m_pencil_dmap;
     StructFact m_spde;
     StructFact m_particle;
-    amrex::Vector<std::unique_ptr<StructFact>> m_spde_pencils;
-    amrex::Vector<std::unique_ptr<StructFact>> m_particle_pencils;
+    std::unique_ptr<StructureFactorBatchedPencilSF> m_spde_pencils;
+    std::unique_ptr<StructureFactorBatchedPencilSF> m_particle_pencils;
 };
 
 #endif

@@ -3,12 +3,151 @@
 #include <SpectralAnalysisUtils.H>
 
 #include <AMReX.H>
+#include <AMReX_FFT.H>
+#include <AMReX_GpuContainers.H>
 #include <AMReX_ParallelDescriptor.H>
 
 #include <cmath>
 #include <fstream>
 #include <iomanip>
 #include <utility>
+
+struct IntermediateScatteringBatchedPencilModes
+{
+    using FFT = amrex::FFT::R2C<amrex::Real, amrex::FFT::Direction::forward>;
+    using SpectralMF = amrex::FabArray<amrex::BaseFab<amrex::GpuComplex<amrex::Real>>>;
+
+    int nx = 0;
+    int n_modes = 0;
+    int npencils = 1;
+    std::unique_ptr<FFT> fft;
+    SpectralMF spectral;
+    amrex::Gpu::DeviceVector<int> q_to_mode;
+    amrex::Gpu::DeviceVector<amrex::Real> device_real;
+    amrex::Gpu::DeviceVector<amrex::Real> device_imag;
+    amrex::Vector<amrex::Real> host_real;
+    amrex::Vector<amrex::Real> host_imag;
+
+    void define (amrex::Geometry const& geom, amrex::Vector<int> const& q_indices,
+                 int npencils_in)
+    {
+        nx = geom.Domain().length(0);
+        n_modes = static_cast<int>(q_indices.size());
+        npencils = npencils_in;
+
+        amrex::FFT::Info info;
+        info.setOneDMode(true);
+        fft = std::make_unique<FFT>(geom.Domain(), info);
+        auto layout = fft->getSpectralDataLayout();
+        spectral.define(layout.first, layout.second, 1, 0);
+
+        amrex::Vector<int> host_q_to_mode(nx, -1);
+        for (int m = 0; m < n_modes; ++m) {
+            const int q = q_indices[m];
+            if (q >= 0 && q < nx) {
+                host_q_to_mode[q] = m;
+            }
+        }
+        q_to_mode.resize(nx);
+        amrex::Gpu::copy(amrex::Gpu::hostToDevice, host_q_to_mode.begin(),
+                         host_q_to_mode.end(), q_to_mode.begin());
+
+        const int n_values = npencils * n_modes;
+        device_real.resize(n_values);
+        device_imag.resize(n_values);
+        host_real.assign(n_values, amrex::Real(0.0));
+        host_imag.assign(n_values, amrex::Real(0.0));
+    }
+
+    void extract (amrex::MultiFab const& phi, int src_comp, amrex::Geometry const& geom,
+                  amrex::Vector<amrex::Real>& real,
+                  amrex::Vector<amrex::Real>& imag)
+    {
+        BL_PROFILE("IntermediateScatteringBatchedPencilModes::extract");
+
+        const int n_values = npencils * n_modes;
+        real.assign(n_values, amrex::Real(0.0));
+        imag.assign(n_values, amrex::Real(0.0));
+        host_real.assign(n_values, amrex::Real(0.0));
+        host_imag.assign(n_values, amrex::Real(0.0));
+        if (n_values == 0) {
+            return;
+        }
+
+        amrex::Real* real_ptr = device_real.dataPtr();
+        amrex::Real* imag_ptr = device_imag.dataPtr();
+        amrex::ParallelFor(n_values, [=] AMREX_GPU_DEVICE (int n) noexcept
+        {
+            real_ptr[n] = amrex::Real(0.0);
+            imag_ptr[n] = amrex::Real(0.0);
+        });
+
+        fft->forward(phi, spectral, src_comp, 0);
+
+        const amrex::Box& domain = geom.Domain();
+#if (AMREX_SPACEDIM > 1)
+        const int ylo = domain.smallEnd(1);
+        const int ny = domain.length(1);
+#endif
+#if (AMREX_SPACEDIM > 2)
+        const int zlo = domain.smallEnd(2);
+#endif
+        const int nx_lookup = nx;
+        const int n_modes_local = n_modes;
+        const int npencils_local = npencils;
+        const amrex::Real scale = amrex::Real(1.0) /
+            std::sqrt(static_cast<amrex::Real>(nx));
+        int const* q_to_mode_ptr = q_to_mode.dataPtr();
+
+        for (amrex::MFIter mfi(spectral, amrex::TilingIfNotGPU()); mfi.isValid(); ++mfi) {
+            const amrex::Box& bx = mfi.tilebox();
+            auto const& spec = spectral.const_array(mfi);
+
+            amrex::ParallelFor(bx, [=] AMREX_GPU_DEVICE (int i, int j, int k) noexcept
+            {
+                if (i < 0 || i >= nx_lookup) {
+                    return;
+                }
+                const int mode = q_to_mode_ptr[i];
+                if (mode < 0) {
+                    return;
+                }
+
+                int p = 0;
+#if (AMREX_SPACEDIM > 1)
+                p = j - ylo;
+#endif
+#if (AMREX_SPACEDIM > 2)
+                p += ny * (k - zlo);
+#endif
+                if (p < 0 || p >= npencils_local) {
+                    return;
+                }
+
+                const int idx = p * n_modes_local + mode;
+                const auto z = spec(i,j,k,0);
+                real_ptr[idx] = z.real() * scale;
+                imag_ptr[idx] = z.imag() * scale;
+            });
+        }
+
+        amrex::Gpu::streamSynchronize();
+        amrex::Gpu::copy(amrex::Gpu::deviceToHost, device_real.begin(), device_real.end(),
+                         host_real.begin());
+        amrex::Gpu::copy(amrex::Gpu::deviceToHost, device_imag.begin(), device_imag.end(),
+                         host_imag.begin());
+        amrex::Gpu::streamSynchronize();
+        amrex::ParallelDescriptor::ReduceRealSum(host_real.data(), n_values);
+        amrex::ParallelDescriptor::ReduceRealSum(host_imag.data(), n_values);
+
+        real = host_real;
+        imag = host_imag;
+    }
+};
+
+IntermediateScatteringFunction::IntermediateScatteringFunction() = default;
+
+IntermediateScatteringFunction::~IntermediateScatteringFunction() = default;
 
 void
 IntermediateScatteringFunction::ReadParameters (amrex::ParmParse& pp)
@@ -154,14 +293,6 @@ IntermediateScatteringFunction::Init (amrex::MultiFab const& phi, amrex::Geometr
         m_npencils = 1;
         m_fft_full.define(phi.boxArray(), phi.DistributionMap(), names, var_scaling);
     } else {
-        amrex::MultiFab sample_density;
-        SpectralAnalysis::CopyDensityComponent(phi, sample_density, 0);
-        amrex::MultiFab sample_pencil;
-        SpectralAnalysis::ExtractXPencil(sample_density, sample_pencil,
-                                         geom.Domain().smallEnd(AMREX_SPACEDIM > 1 ? 1 : 0),
-                                         geom.Domain().smallEnd(AMREX_SPACEDIM > 2 ? 2 : 0));
-        m_fft_pencil.define(sample_pencil.boxArray(), sample_pencil.DistributionMap(), names, var_scaling);
-
         const amrex::Box& domain = geom.Domain();
         m_npencils = 1;
 #if (AMREX_SPACEDIM > 1)
@@ -170,6 +301,8 @@ IntermediateScatteringFunction::Init (amrex::MultiFab const& phi, amrex::Geometr
 #if (AMREX_SPACEDIM > 2)
         m_npencils *= domain.length(2);
 #endif
+        m_pencil_modes = std::make_unique<IntermediateScatteringBatchedPencilModes>();
+        m_pencil_modes->define(geom, m_q_indices, m_npencils);
     }
 
     auto init_source = [this] (SourceState& state)
@@ -186,47 +319,25 @@ IntermediateScatteringFunction::Init (amrex::MultiFab const& phi, amrex::Geometr
 }
 
 void
-IntermediateScatteringFunction::ExtractSourceModes (amrex::MultiFab const& density,
+IntermediateScatteringFunction::ExtractSourceModes (amrex::MultiFab const& phi,
                                                     amrex::Geometry const& geom,
+                                                    int src_comp,
                                                     amrex::Vector<amrex::Real>& real,
                                                     amrex::Vector<amrex::Real>& imag)
 {
     real.assign(m_npencils * m_n_modes, amrex::Real(0.0));
     imag.assign(m_npencils * m_n_modes, amrex::Real(0.0));
     if (m_do_1D == 0) {
+        amrex::MultiFab density;
+        SpectralAnalysis::CopyDensityComponent(phi, density, src_comp);
         SpectralAnalysis::ExtractSelectedXModes(m_fft_full, density, m_q_indices, real, imag);
         return;
     }
 
-    const amrex::Box& domain = geom.Domain();
-#if (AMREX_SPACEDIM > 1)
-    const int ylo = domain.smallEnd(1);
-    const int ny = domain.length(1);
-#else
-    const int ylo = 0;
-    const int ny = 1;
-#endif
-#if (AMREX_SPACEDIM > 2)
-    const int zlo = domain.smallEnd(2);
-#else
-    const int zlo = 0;
-#endif
-
-    for (int p = 0; p < m_npencils; ++p) {
-        const int pencily = ylo + p % ny;
-        const int pencilz = zlo + p / ny;
-        amrex::MultiFab pencil;
-        SpectralAnalysis::ExtractXPencil(density, pencil, pencily, pencilz);
-        amrex::Vector<amrex::Real> pencil_real;
-        amrex::Vector<amrex::Real> pencil_imag;
-        SpectralAnalysis::ExtractSelectedXModes(m_fft_pencil, pencil, m_q_indices,
-                                                pencil_real, pencil_imag);
-        for (int m = 0; m < m_n_modes; ++m) {
-            const int idx = p * m_n_modes + m;
-            real[idx] = pencil_real[m];
-            imag[idx] = pencil_imag[m];
-        }
+    if (!m_pencil_modes) {
+        amrex::Abort("Batched 1D ISF modes were not initialized.");
     }
+    m_pencil_modes->extract(phi, src_comp, geom, real, imag);
 }
 
 void
@@ -334,20 +445,16 @@ IntermediateScatteringFunction::Sample (int step, amrex::Real time,
     }
 
     if (need_spde) {
-        amrex::MultiFab density;
-        SpectralAnalysis::CopyDensityComponent(phi, density, 0);
         amrex::Vector<amrex::Real> current_real;
         amrex::Vector<amrex::Real> current_imag;
-        ExtractSourceModes(density, geom, current_real, current_imag);
+        ExtractSourceModes(phi, geom, 0, current_real, current_imag);
         AccumulateSource(m_spde, current_real, current_imag, step, starts_window);
     }
 
     if (need_particle) {
-        amrex::MultiFab density;
-        SpectralAnalysis::CopyDensityComponent(phi, density, 1);
         amrex::Vector<amrex::Real> current_real;
         amrex::Vector<amrex::Real> current_imag;
-        ExtractSourceModes(density, geom, current_real, current_imag);
+        ExtractSourceModes(phi, geom, 1, current_real, current_imag);
         AccumulateSource(m_particle, current_real, current_imag, step, starts_window);
     }
 }
