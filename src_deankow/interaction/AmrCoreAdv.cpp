@@ -18,6 +18,9 @@
 #include <myfunc.H>
 #include "chrono"
 
+#include <fstream>
+#include <iomanip>
+
 using namespace amrex;
 using namespace std::chrono;
 
@@ -91,6 +94,7 @@ AmrCoreAdv::AmrCoreAdv ()
 
     phi_new.resize(nlevs_max);
     phi_old.resize(nlevs_max);
+    integrated_current.resize(nlevs_max);
 
     bcs.resize(1);     // Setup 1-component
     for (int idim = 0; idim < AMREX_SPACEDIM; ++idim)
@@ -167,6 +171,11 @@ AmrCoreAdv::Evolve ()
         if (plot_int > 0 && (step+1) % plot_int == 0) {
             last_plot_file_step = step+1;
             WritePlotFile();
+        }
+
+        if (eval_current) {
+            const std::string& plotfilename = amrex::Concatenate(plot_file, istep[0], 6);
+            WriteCurrentAsciiFile(plotfilename + "_current_ascii.dat");
         }
 
         if (chk_int > 0 && (step+1) % chk_int == 0) {
@@ -312,6 +321,12 @@ AmrCoreAdv::MakeNewLevelFromCoarse (int lev, Real time, const BoxArray& ba,
 
     phi_new[lev].define(ba, dm, ncomp, ng);
     phi_old[lev].define(ba, dm, ncomp, ng);
+    for (int idim=0; idim < AMREX_SPACEDIM; idim++) {
+        amrex::BoxArray face_ba = amrex::convert(ba,
+                                   amrex::IntVect::TheDimensionVector(idim));
+        integrated_current[lev][idim].define(face_ba, dm, ncomp, 0);
+        integrated_current[lev][idim].setVal(amrex::Real(0.));
+    }
 
     t_new[lev] = time;
     t_old[lev] = time - 1.e200;
@@ -350,6 +365,13 @@ AmrCoreAdv::RemakeLevel (int lev, Real time, const BoxArray& ba,
     std::swap(new_state, phi_new[lev]);
     std::swap(old_state, phi_old[lev]);
 
+    for (int idim=0; idim < AMREX_SPACEDIM; idim++) {
+        amrex::BoxArray face_ba = amrex::convert(ba,
+                                   amrex::IntVect::TheDimensionVector(idim));
+        integrated_current[lev][idim].define(face_ba, dm, ncomp, 0);
+        integrated_current[lev][idim].setVal(amrex::Real(0.));
+    }
+
     t_new[lev] = time;
     t_old[lev] = time - 1.e200;
 
@@ -371,6 +393,9 @@ AmrCoreAdv::ClearLevel (int lev)
 {
     phi_new[lev].clear();
     phi_old[lev].clear();
+    for (int idim=0; idim < AMREX_SPACEDIM; idim++) {
+        integrated_current[lev][idim].clear();
+    }
     flux_reg[lev].reset(nullptr);
     fillpatcher[lev].reset(nullptr);
 }
@@ -401,6 +426,12 @@ void AmrCoreAdv::MakeNewLevelFromScratch (int lev, Real time, const BoxArray& ba
 
     phi_new[lev].define(ba, dm, ncomp, ng);
     phi_old[lev].define(ba, dm, ncomp, ng);
+    for (int idim=0; idim < AMREX_SPACEDIM; idim++) {
+        amrex::BoxArray face_ba = amrex::convert(ba,
+                                   amrex::IntVect::TheDimensionVector(idim));
+        integrated_current[lev][idim].define(face_ba, dm, ncomp, 0);
+        integrated_current[lev][idim].setVal(amrex::Real(0.));
+    }
 
     t_new[lev] = time;
     t_old[lev] = time - 1.e200;
@@ -455,7 +486,7 @@ void AmrCoreAdv::MakeNewLevelFromScratch (int lev, Real time, const BoxArray& ba
         }
 
         }
- 
+
     } else {
         phi_new[lev].ParallelCopy(phi_new[lev-1], 0, 0, phi_new[lev].nComp());
     }
@@ -660,6 +691,9 @@ AmrCoreAdv::ReadParameters ( amrex::Vector<int>& bc_lo, amrex::Vector<int>& bc_h
 
         diff_coeff = 0.5;
         pp.queryAdd("diff_coeff", diff_coeff);
+
+        eval_current = false;
+        pp.query("eval_current", eval_current);
 
 
         // read in BC; see Src/Base/AMReX_BC_TYPES.H for supported types
@@ -912,7 +946,7 @@ AmrCoreAdv::timeStepNoSubcycling (Real time, int iteration)
 #endif
     particleData.advance_particles(lev_for_particles, dt[lev_for_particles], diff_coeff, cell_vol,
                                    phi_old[0], phi_new[0], phi_new[lev_for_particles],
-                                   num_part);
+                                   num_part, eval_current, integrated_current[lev_for_particles]);
     particleData.Redistribute();
 #endif
 
@@ -1010,7 +1044,7 @@ AmrCoreAdv::WritePlotFile () const
 //            mf[lev].setVal(-1.0,1,1,0);
 //        }
     }
- 
+
     for (int lev = 0; lev <= finest_level; ++lev) {
         const auto prob_lo = Geom(lev).ProbLoArray();
         const auto prob_hi = Geom(lev).ProbHiArray();
@@ -1120,9 +1154,115 @@ AmrCoreAdv::WritePlotFile () const
 
     }
 
+    if (eval_current) {
+        //const amrex::Array<std::string, AMREX_SPACEDIM> current_dir_names =
+        //    {AMREX_D_DECL("x", "y", "z")};
+        //const int current_lev = finest_level;
+        //for (int idim = 0; idim < AMREX_SPACEDIM; ++idim) {
+        //    amrex::Vector<std::string> current_varnames(integrated_current[current_lev][idim].nComp());
+        //    for (int n = 0; n < current_varnames.size(); ++n) {
+        //        current_varnames[n] = "integrated_current_" + current_dir_names[idim];
+        //        if (current_varnames.size() > 1) {
+        //            current_varnames[n] += "_" + std::to_string(n);
+        //        }
+        //    }
+
+        //    const std::string current_plotfilename = plotfilename + "_current_" + current_dir_names[idim];
+        //    amrex::Print() << "Writing plotfile " << current_plotfilename << "\n";
+        //    WriteSingleLevelPlotfile(current_plotfilename,
+        //                             integrated_current[current_lev][idim],
+        //                             current_varnames,
+        //                             Geom(current_lev), t_new[current_lev], istep[current_lev]);
+        //}
+    }
+
 #ifdef AMREX_PARTICLES
    //particleData.writePlotFile(plotfilename,phi_new[1]);
 #endif
+}
+
+
+void
+AmrCoreAdv::WriteCurrentAsciiFile (const std::string& a_fname) const
+{
+    BL_PROFILE("AmrCoreAdv::WriteCurrentAsciiFile()");
+
+    if (ParallelDescriptor::IOProcessor()) {
+        std::ofstream ofs(a_fname, std::ofstream::out | std::ofstream::trunc);
+        if (!ofs.good()) {
+            amrex::FileOpenFailed(a_fname);
+        }
+        ofs << "# cell rows: cell lev i j k phi_old phi_new\n";
+        ofs << "# face rows: face lev dir i j k integrated_current\n";
+    }
+    ParallelDescriptor::Barrier();
+
+    const amrex::Array<std::string, AMREX_SPACEDIM> current_dir_names =
+        {AMREX_D_DECL("x", "y", "z")};
+
+    const int myproc = ParallelDescriptor::MyProc();
+    const int nprocs = ParallelDescriptor::NProcs();
+    for (int rank = 0; rank < nprocs; ++rank) {
+        if (myproc == rank) {
+            std::ofstream ofs(a_fname, std::ofstream::out | std::ofstream::app);
+            if (!ofs.good()) {
+                amrex::FileOpenFailed(a_fname);
+            }
+            ofs << std::setprecision(17);
+
+            for (int lev = 0; lev <= finest_level; ++lev) {
+                for (MFIter mfi(phi_new[lev]); mfi.isValid(); ++mfi) {
+                    const Box& bx = mfi.validbox();
+                    const auto phi_old_arr = phi_old[lev].const_array(mfi);
+                    const auto phi_new_arr = phi_new[lev].const_array(mfi);
+#if (AMREX_SPACEDIM == 2)
+                    const int klo = 0;
+                    const int khi = 0;
+#else
+                    const int klo = bx.smallEnd(2);
+                    const int khi = bx.bigEnd(2);
+#endif
+                    for (int k = klo; k <= khi; ++k) {
+                        for (int j = bx.smallEnd(1); j <= bx.bigEnd(1); ++j) {
+                            for (int i = bx.smallEnd(0); i <= bx.bigEnd(0); ++i) {
+                                ofs << "cell " << lev << " " << i << " " << j << " " << k << " "
+                                    << phi_old_arr(i,j,k,0) << " " << phi_new_arr(i,j,k,0) << "\n";
+                            }
+                        }
+                    }
+                }
+            }
+
+            for (int lev = 0; lev <= finest_level; ++lev) {
+                for (int idim = 0; idim < AMREX_SPACEDIM; ++idim) {
+                    auto owner_mask = integrated_current[lev][idim].OwnerMask(Geom(lev).periodicity());
+                    for (MFIter mfi(integrated_current[lev][idim]); mfi.isValid(); ++mfi) {
+                        const Box& bx = mfi.validbox();
+                        const auto current_arr = integrated_current[lev][idim].const_array(mfi);
+                        const auto owner_arr = owner_mask->const_array(mfi);
+#if (AMREX_SPACEDIM == 2)
+                        const int klo = 0;
+                        const int khi = 0;
+#else
+                        const int klo = bx.smallEnd(2);
+                        const int khi = bx.bigEnd(2);
+#endif
+                        for (int k = klo; k <= khi; ++k) {
+                            for (int j = bx.smallEnd(1); j <= bx.bigEnd(1); ++j) {
+                                for (int i = bx.smallEnd(0); i <= bx.bigEnd(0); ++i) {
+                                    if (owner_arr(i,j,k,0) == 0) { continue; }
+                                    ofs << "face " << lev << " " << current_dir_names[idim] << " "
+                                        << i << " " << j << " " << k << " "
+                                        << current_arr(i,j,k,0) << "\n";
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        ParallelDescriptor::Barrier();
+    }
 }
 
 void
@@ -1292,6 +1432,12 @@ AmrCoreAdv::ReadCheckpointFile ()
         int ng = 0;
         phi_old[lev].define(grids[lev], dmap[lev], ncomp, ng);
         phi_new[lev].define(grids[lev], dmap[lev], ncomp, ng);
+        for (int idim=0; idim < AMREX_SPACEDIM; idim++) {
+            amrex::BoxArray face_ba = amrex::convert(grids[lev],
+                                       amrex::IntVect::TheDimensionVector(idim));
+            integrated_current[lev][idim].define(face_ba, dmap[lev], ncomp, 0);
+            integrated_current[lev][idim].setVal(amrex::Real(0.));
+        }
 
         if (lev > 0 && do_reflux) {
             flux_reg[lev] = std::make_unique<FluxRegister>(grids[lev], dmap[lev], refRatio(lev-1), lev, ncomp);
@@ -1307,6 +1453,5 @@ AmrCoreAdv::ReadCheckpointFile ()
 #ifdef AMREX_PARTICLES
     particleData.Restart((amrex::ParGDBBase*)GetParGDB(),restart_chkfile);
 #endif
-
 
 }

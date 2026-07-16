@@ -130,6 +130,9 @@ private:
     // write plotfile to disk
     void WritePlotFile () const;
 
+    // write cell and face current diagnostics as a row-wise ASCII file
+    void WriteCurrentAsciiFile (const std::string& a_fname) const;
+
     // write checkpoint file to disk
     void WriteCheckpointFile () const;
 
@@ -151,6 +154,9 @@ private:
     // after advancing a level we use "swap".
     amrex::Vector<amrex::MultiFab> phi_new;
     amrex::Vector<amrex::MultiFab> phi_old;
+
+    // Vector of multifabs to store particles crossing in a time step
+    amrex::Vector<amrex::Array<amrex::MultiFab, AMREX_SPACEDIM>> integrated_current;
 
     // this is essentially a 2*DIM integer array storing the physical boundary
     // condition types at the lo/hi walls in each direction
@@ -192,6 +198,8 @@ private:
     amrex::Real diff_coeff;
 
     int alg_type;
+
+    bool eval_current = false;
 
     int seed=0;
 

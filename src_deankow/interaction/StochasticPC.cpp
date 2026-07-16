@@ -527,12 +527,16 @@ StochasticPC::AdvectParticles (int lev, Real dt,
                                        Real interaction_scale,
                                        Real num_part,
                                        Real diff_coeff,
-                                       int use_ext_pot)
+                                       int use_ext_pot,
+                                       bool eval_current,
+                                       Array<MultiFab, AMREX_SPACEDIM>& integrated_current)
 {
     BL_PROFILE("StochasticPC::AdvectParticles");
     const auto dx = Geom(lev).CellSizeArray();
+    const auto dxi = Geom(lev).InvCellSizeArray();
     const auto p_lo = Geom(lev).ProbLoArray();
     const auto p_hi = Geom(lev).ProbHiArray();
+    const auto domain = Geom(lev).Domain();
 
     AMREX_D_TERM( bool is_periodic_in_x = Geom(lev).isPeriodic(0);,
                   bool is_periodic_in_y = Geom(lev).isPeriodic(1);,
@@ -611,6 +615,12 @@ StochasticPC::AdvectParticles (int lev, Real dt,
         auto& aos  = ptile.GetArrayOfStructs();
         const int np = ptile.numRealParticles();
         auto* pstruct = aos().data();
+
+        const Array4<Real> current_x = integrated_current[0].array(pti.index());
+        const Array4<Real> current_y = integrated_current[1].array(pti.index());
+#if (AMREX_SPACEDIM == 3)
+        const Array4<Real> current_z = integrated_current[2].array(pti.index());
+#endif
 
         Gpu::DeviceVector<Real> dpx(np, 0.0);
         Gpu::DeviceVector<Real> dpy(np, 0.0);
@@ -873,6 +883,45 @@ StochasticPC::AdvectParticles (int lev, Real dt,
 #if (AMREX_SPACEDIM == 3)
             p.pos(2) += static_cast<ParticleReal>(totalz);
 #endif
+
+            IntVect old_cell(AMREX_D_DECL(
+                int(Math::floor((p.rdata(RealIdx::xold)-p_lo[0])*dxi[0])),
+                int(Math::floor((p.rdata(RealIdx::yold)-p_lo[1])*dxi[1])),
+                int(Math::floor((p.rdata(RealIdx::zold)-p_lo[2])*dxi[2]))));
+            IntVect new_cell(AMREX_D_DECL(
+                int(Math::floor((p.pos(0)-p_lo[0])*dxi[0])),
+                int(Math::floor((p.pos(1)-p_lo[1])*dxi[1])),
+                int(Math::floor((p.pos(2)-p_lo[2])*dxi[2]))));
+            old_cell += domain.smallEnd();
+            new_cell += domain.smallEnd();
+
+            if (eval_current) {
+#if (AMREX_SPACEDIM == 2)
+                const int old_k = 0;
+#else
+                const int old_k = old_cell[2];
+#endif
+
+                if (new_cell[0] > old_cell[0]) {
+                    Gpu::Atomic::AddNoRet(&current_x(old_cell[0]+1, old_cell[1], old_k, 0), Real(1.0));
+                } else if (new_cell[0] < old_cell[0]) {
+                    Gpu::Atomic::AddNoRet(&current_x(old_cell[0], old_cell[1], old_k, 0), Real(-1.0));
+                }
+
+                if (new_cell[1] > old_cell[1]) {
+                    Gpu::Atomic::AddNoRet(&current_y(old_cell[0], old_cell[1]+1, old_k, 0), Real(1.0));
+                } else if (new_cell[1] < old_cell[1]) {
+                    Gpu::Atomic::AddNoRet(&current_y(old_cell[0], old_cell[1], old_k, 0), Real(-1.0));
+                }
+
+#if (AMREX_SPACEDIM == 3)
+                if (new_cell[2] > old_cell[2]) {
+                    Gpu::Atomic::AddNoRet(&current_z(old_cell[0], old_cell[1], old_cell[2]+1, 0), Real(1.0));
+                } else if (new_cell[2] < old_cell[2]) {
+                    Gpu::Atomic::AddNoRet(&current_z(old_cell[0], old_cell[1], old_cell[2], 0), Real(-1.0));
+                }
+#endif
+            }
 
             if (is_periodic_in_x) {
                 if (p.pos(0) < p_lo[0]) p.pos(0) += Lx;

@@ -78,7 +78,9 @@ public:
                                   amrex::Real interaction_scale,
                                   amrex::Real num_part,
                                   amrex::Real diff_coeff,
-                                  int use_ext_pot);
+                                  int use_ext_pot,
+                                  bool eval_current,
+                                  amrex::Array<amrex::MultiFab, AMREX_SPACEDIM>& integrated_current);
 
     void AdvectWithRandomWalk (int lev, amrex::Real dt, amrex::Real diff_coeff);
 

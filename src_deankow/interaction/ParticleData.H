@@ -188,7 +188,9 @@ struct ParticleData {
                            amrex::MultiFab& phi_crse_old,
                            amrex::MultiFab& phi_crse_new,
                            amrex::MultiFab& phi_fine,
-                           amrex::Real num_part)
+                           amrex::Real num_part,
+                           bool eval_current,
+                           amrex::Array<amrex::MultiFab, AMREX_SPACEDIM>& integrated_current)
     {
         // Update stochastic particles
         if (use_particles) {
@@ -202,6 +204,16 @@ struct ParticleData {
             // amrex::Print() << "PARTICLE BOXARRAY " << stochastic_particles->ParticleBoxArray(1) << std::endl;
             amrex::MultiFab phi_grown(stochastic_particles->ParticleBoxArray(1),
                                       stochastic_particles->ParticleDistributionMap(1),1,0);
+            amrex::Array<amrex::MultiFab, AMREX_SPACEDIM> integrated_current_grown;
+            for (int idim = 0; idim < AMREX_SPACEDIM; ++idim) {
+                amrex::BoxArray face_ba = amrex::convert(stochastic_particles->ParticleBoxArray(1),
+                                           amrex::IntVect::TheDimensionVector(idim));
+                integrated_current_grown[idim].define(face_ba,
+                                                      stochastic_particles->ParticleDistributionMap(1),
+                                                      integrated_current[idim].nComp(), 0);
+                integrated_current_grown[idim].setVal(amrex::Real(0.));
+                integrated_current[idim].setVal(amrex::Real(0.));
+            }
             phi_crse_old.FillBoundary(geom_fine.periodicity());
             phi_grown.ParallelCopy(phi_crse_old,0,0,1,1,0,geom_fine.periodicity());
 
@@ -220,7 +232,17 @@ struct ParticleData {
             // **********************************************************************
             stochastic_particles->AdvectParticles(lev, dt_lev, interaction_range,
                                                           interaction_strength, interaction_scale,
-                                                          num_part, diff_coeff, use_ext_pot);
+                                                          num_part, diff_coeff, use_ext_pot,
+                                                          eval_current, integrated_current_grown);
+
+            if (eval_current) {
+                for (int idim = 0; idim < AMREX_SPACEDIM; ++idim) {
+                    integrated_current_grown[idim].SumBoundary(geom_fine.periodicity());
+                    integrated_current[idim].ParallelCopy(integrated_current_grown[idim],
+                                                          0, 0, integrated_current[idim].nComp(),
+                                                          0, 0, geom_fine.periodicity());
+                }
+            }
 
             // **********************************************************************
             // Advect the particles in the valid region and in the ghost region
