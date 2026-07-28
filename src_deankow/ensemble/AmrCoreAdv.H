@@ -28,6 +28,9 @@ AMREX_ENUM(InitType,
     external_potential_x
 );
 
+class IntermediateScatteringFunction;
+class StructureFactorAnalysis;
+
 class AmrCoreAdv
     : public amrex::AmrCore
 {
@@ -41,8 +44,8 @@ public:
     AmrCoreAdv ();
     ~AmrCoreAdv () override;
 
-    AmrCoreAdv (AmrCoreAdv&& rhs) noexcept = default;
-    AmrCoreAdv& operator= (AmrCoreAdv&& rhs) noexcept = default;
+    AmrCoreAdv (AmrCoreAdv&& rhs) noexcept;
+    AmrCoreAdv& operator= (AmrCoreAdv&& rhs) noexcept;
 
     AmrCoreAdv (const AmrCoreAdv& rhs) = delete;
     AmrCoreAdv& operator= (const AmrCoreAdv& rhs) = delete;
@@ -262,6 +265,9 @@ private:
     // checkpoint prefix and frequency
     std::string chk_file {"chk"};
     int chk_int = -1;
+
+    std::unique_ptr<StructureFactorAnalysis> m_structure_factor;
+    std::unique_ptr<IntermediateScatteringFunction> m_intermediate_scattering;
 
     struct DiagnosticsConfig {
         bool enabled = false;

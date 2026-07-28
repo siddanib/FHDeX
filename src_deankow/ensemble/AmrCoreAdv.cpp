@@ -16,6 +16,8 @@
 #endif
 
 #include <AmrCoreAdv.H>
+#include <IntermediateScatteringFunction.H>
+#include <StructureFactorAnalysis.H>
 #include <Kernels.H>
 #include <mykernel.H>
 #include "chrono"
@@ -26,6 +28,7 @@
 #include <iomanip>
 #include <sstream>
 #include <type_traits>
+#include <utility>
 
 using namespace amrex;
 using namespace std::chrono;
@@ -125,6 +128,7 @@ void ComputeReducedDensitiesImpl (
     amrex::ParallelDescriptor::ReduceRealSum(particle_reduced_density.data(), ny);
 }
 
+
 }
 
 // constructor - reads in parameters from inputs file
@@ -132,6 +136,9 @@ void ComputeReducedDensitiesImpl (
 //             - initializes BCRe boundary condition object
 AmrCoreAdv::AmrCoreAdv ()
 {
+    m_structure_factor = std::make_unique<StructureFactorAnalysis>();
+    m_intermediate_scattering = std::make_unique<IntermediateScatteringFunction>();
+
 
     // periodic boundaries
     //int bc_lo[] = {BCType::int_dir, BCType::int_dir, BCType::int_dir};
@@ -378,6 +385,11 @@ AmrCoreAdv::AmrCoreAdv ()
     }
 }
 
+AmrCoreAdv::AmrCoreAdv (AmrCoreAdv&& rhs) noexcept = default;
+
+AmrCoreAdv&
+AmrCoreAdv::operator= (AmrCoreAdv&& rhs) noexcept = default;
+
 AmrCoreAdv::~AmrCoreAdv () = default;
 
 // advance solution to final time
@@ -386,12 +398,18 @@ AmrCoreAdv::Evolve ()
 {
     Real cur_time = t_new[0];
     int last_plot_file_step = 0;
+    bool sampled_initial_isf_state = false;
 
     for (int step = istep[0]; step < max_step && cur_time < stop_time; ++step)
     {
         amrex::Print() << "\nCoarse STEP " << step+1 << " starts ..." << std::endl;
 
         ComputeDt();
+
+        if (!sampled_initial_isf_state && m_intermediate_scattering->SamplesThisStep(istep[0])) {
+            m_intermediate_scattering->Sample(istep[0], cur_time, phi_new[0], Geom(0), dt[0]);
+            sampled_initial_isf_state = true;
+        }
 
         int lev = 0;
         int iteration = 1;
@@ -433,6 +451,21 @@ AmrCoreAdv::Evolve ()
             WriteCheckpointFile();
         }
 
+        // structure factor
+        const int next_step = step + 1;
+        if (m_structure_factor->Enabled()) {
+            if (m_structure_factor->SamplesThisStep(next_step)) {
+                m_structure_factor->Sample(phi_new[0], Geom(0));
+            }
+            if (m_structure_factor->WritesThisStep(next_step, plot_int)) {
+                m_structure_factor->Write(istep[0], cur_time);
+            }
+        }
+
+        if (m_intermediate_scattering->SamplesThisStep(next_step)) {
+            m_intermediate_scattering->Sample(next_step, cur_time, phi_new[0], Geom(0), dt[0]);
+        }
+
 #ifdef AMREX_MEM_PROFILING
         {
             std::ostringstream ss;
@@ -446,6 +479,10 @@ AmrCoreAdv::Evolve ()
 
     if (plot_int > 0 && istep[0] > last_plot_file_step) {
         WritePlotFile();
+    }
+
+    if (m_intermediate_scattering->Enabled()) {
+        m_intermediate_scattering->Write(Geom(0));
     }
 }
 
@@ -1181,6 +1218,9 @@ AmrCoreAdv::ReadParameters ( amrex::Vector<int>& bc_lo, amrex::Vector<int>& bc_h
         pp.query("diag_x_max", m_diag.x_max);
         pp.query("diag_file", m_diag.file);
 
+        m_structure_factor->ReadParameters(pp);
+        m_intermediate_scattering->ReadParameters(pp);
+
         // read in BC; see Src/Base/AMReX_BC_TYPES.H for supported types
         pp.queryarr("bc_lo", bc_lo);
         pp.queryarr("bc_hi", bc_hi);
@@ -1271,6 +1311,15 @@ AmrCoreAdv::ReadParameters ( amrex::Vector<int>& bc_lo, amrex::Vector<int>& bc_h
         particleData.init_particle_params(max_level, a_ensemble_dir_exists,
                                           m_external_potential, m_activity);
 #endif
+
+    bool particles_enabled = false;
+#ifdef AMREX_PARTICLES
+    particles_enabled = particleData.UsingParticles();
+#endif
+    m_structure_factor->Validate(max_level, alg_type, particles_enabled, Geom(0));
+    m_intermediate_scattering->Validate(max_level, alg_type, particles_enabled, Geom(0),
+                                        m_structure_factor->Do1D(),
+                                        m_structure_factor->Mode());
 }
 
 void

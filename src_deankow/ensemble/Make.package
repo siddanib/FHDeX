@@ -1,9 +1,15 @@
 CEXE_sources += AdvancePhiAtLevel.cpp
 CEXE_sources += AmrCoreAdv.cpp 
+CEXE_sources += StructureFactorAnalysis.cpp
+CEXE_sources += IntermediateScatteringFunction.cpp
+CEXE_sources += SpectralAnalysisUtils.cpp
 CEXE_sources += main.cpp 
 CEXE_sources += myfunc.cpp 
 
 CEXE_headers += AmrCoreAdv.H 
+CEXE_headers += StructureFactorAnalysis.H
+CEXE_headers += IntermediateScatteringFunction.H
+CEXE_headers += SpectralAnalysisUtils.H
 CEXE_headers += bc_fill.H
 CEXE_headers += ExternalPotential.H
 CEXE_headers += Activity.H
