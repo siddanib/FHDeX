@@ -1,3 +1,0 @@
-This case uses a CNN to model fluxes.
-
-Furthermore, the used x_0 is the fluxes obtained from DK simulation. 
