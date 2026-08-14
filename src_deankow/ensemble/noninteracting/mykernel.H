@@ -333,6 +333,20 @@ void compute_flux_x_quantized (int i, int j, int k,
     else {
         flux_val = std::ceil(flux_val);
     }
+    // When external potential is active, the ML flux was not quantized in
+    // FillMLStochFluxDir, so this is the single quantization point for the
+    // combined ML + external potential flux. Apply the limiter here using
+    // integer cell particle counts. Sign convention after the negation in
+    // compute_flux_x (fluxx = -ml_flux): positive fluxx = R→L, so the right
+    // cell is the source; negative fluxx = L→R, so the left cell is the source.
+    if (external_potential.enabled) {
+        amrex::Real dvolinv = AMREX_D_TERM(dxinv, *dyinv, *dzinv);
+        amrex::Real dvol = amrex::Real(1.) / dvolinv;
+        amrex::Real phiL_int = std::floor(std::max(phi(i-1,j,k,coeff_index) * dvol, amrex::Real(0.)));
+        amrex::Real phiR_int = std::floor(std::max(phi(i  ,j,k,coeff_index) * dvol, amrex::Real(0.)));
+        flux_val = std::min(flux_val,  phiR_int);  // positive (R→L): capped by right cell
+        flux_val = std::max(flux_val, -phiL_int);  // negative (L→R): capped by left cell
+    }
     fluxx(i,j,k,coeff_index) = flux_val;
 }
 
@@ -457,6 +471,18 @@ void compute_flux_y_quantized (int i, int j, int k,
     }
     else {
         flux_val = std::ceil(flux_val);
+    }
+    // Same combined-flux limiter as compute_flux_x_quantized. Sign convention
+    // after negation in compute_flux_y (fluxy = -ml_flux): positive fluxy =
+    // top→bottom (j→j-1), so the top cell (j) is the source; negative fluxy =
+    // bottom→top (j-1→j), so the bottom cell (j-1) is the source.
+    if (external_potential.enabled) {
+        amrex::Real dvolinv = AMREX_D_TERM(dxinv, *dyinv, *dzinv);
+        amrex::Real dvol = amrex::Real(1.) / dvolinv;
+        amrex::Real phiL_int = std::floor(std::max(phi(i,j-1,k,coeff_index) * dvol, amrex::Real(0.)));
+        amrex::Real phiR_int = std::floor(std::max(phi(i,j  ,k,coeff_index) * dvol, amrex::Real(0.)));
+        flux_val = std::min(flux_val,  phiR_int);  // positive (top→bottom): capped by top cell
+        flux_val = std::max(flux_val, -phiL_int);  // negative (bottom→top): capped by bottom cell
     }
     fluxy(i,j,k,coeff_index) = flux_val;
 }

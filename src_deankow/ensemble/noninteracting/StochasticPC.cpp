@@ -1,6 +1,7 @@
 #include "StochasticPC.H"
 
 #include <AMReX_GpuContainers.H>
+#include <limits>
 #include <AMReX_Math.H>
 #include <AMReX_TracerParticle_mod_K.H>
 
@@ -111,11 +112,13 @@ StochasticPC::AddParticles (MultiFab& phi_fine, const BoxArray& ba_to_exclude,
         Gpu::DeviceVector<unsigned int> counts(tile_box.numPts()+1, 0);
         unsigned int* pcount = counts.dataPtr();
 
+        // Copy to local so the member is captured by value in the GPU kernel.
+        bool stochastic_init = m_stochastic_particle_init;
         amrex::ParallelForRNG(tile_box,
         [=] AMREX_GPU_DEVICE (int i, int j, int k, amrex::RandomEngine const& engine) noexcept
         {
             if (assign_grid(IntVect(AMREX_D_DECL(i, j, k))).first >= 0) {return;}
-            Real rannum = amrex::Random(engine);
+            Real rannum = stochastic_init ? amrex::Random(engine) : amrex::Real(0.);
             int npart_in_cell = int(phi_arr(i,j,k,0)*cell_vol+rannum);
             pcount[flat_index(i, j, k)] += npart_in_cell;
             // if (phi_arr(i,j,k) > 0.) {
@@ -187,7 +190,7 @@ StochasticPC::AddParticles (MultiFab& phi_fine, const BoxArray& ba_to_exclude,
                                    ens_flag, time, amrex::Real(0.5)*(xm+xp), yp);
                     Real vmy = external_potential_value(external_potential,
                                    ens_flag, time, amrex::Real(0.5)*(xm+xp), ym);
-                    
+
                     Real vsubx = (vpx - vmx)/dx[0];
                     Real vsuby = (vpy - vmy)/dx[1];
                     Real sampx,sampy;
@@ -206,6 +209,10 @@ StochasticPC::AddParticles (MultiFab& phi_fine, const BoxArray& ba_to_exclude,
                      //     amrex::Print() << "center " << i << " " << j << " " << sampx << " " << r[0] << " " << vsubx << std::endl;
                      //  }
                        r[0] = sampx / dx[0];
+                       // Log/exp rounding can push sampx/dx[0] to >= 1;
+                       // clamp so the particle stays within the cell.
+                       r[0] = amrex::min(r[0],
+                               amrex::Real(1.) - amrex::Real(2.)*std::numeric_limits<amrex::Real>::epsilon());
                     }
 
                     if(std::abs(vsuby) >= 1.e-12)
@@ -220,12 +227,30 @@ StochasticPC::AddParticles (MultiFab& phi_fine, const BoxArray& ba_to_exclude,
                        }
 #endif
                        r[1] = sampy / dx[1];
+                       // Log/exp rounding can push sampy/dx[1] to >= 1;
+                       // clamp so the particle stays within the cell.
+                       r[1] = amrex::min(r[1],
+                               amrex::Real(1.) - amrex::Real(2.)*std::numeric_limits<amrex::Real>::epsilon());
                     }
                 }
 
-                AMREX_D_TERM( Real x = plo[0] + (i + r[0])*dx[0];,
-                              Real y = plo[1] + (j + r[1])*dx[1];,
-                              Real z = plo[2] + (k + r[2])*dx[2];);
+                // Compute positions and clamp to the open interval [cell_lo, cell_hi).
+                // The gap must be 1 ULP at the cell boundary value, not at dx — especially
+                // in float precision with unity dx (ensemble direction), where (j + r[1])
+                // can round to j+1 before the multiply, placing the particle on the boundary.
+                // Using epsilon()*abs(cell_hi) gives the correct ULP-scaled gap regardless
+                // of cell index magnitude or grid spacing.
+                Real x_hi = plo[0] + (i+1)*dx[0];
+                Real x = amrex::min(plo[0] + (i + r[0])*dx[0],
+                                    x_hi - std::numeric_limits<amrex::Real>::epsilon()*std::abs(x_hi));
+                Real y_hi = plo[1] + (j+1)*dx[1];
+                Real y = amrex::min(plo[1] + (j + r[1])*dx[1],
+                                    y_hi - std::numeric_limits<amrex::Real>::epsilon()*std::abs(y_hi));
+#if (AMREX_SPACEDIM == 3)
+                Real z_hi = plo[2] + (k+1)*dx[2];
+                Real z = amrex::min(plo[2] + (k + r[2])*dx[2],
+                                    z_hi - std::numeric_limits<amrex::Real>::epsilon()*std::abs(z_hi));
+#endif
 
                 p.id()  = ip + id_start;
                 p.cpu() = my_cpu;

@@ -1198,6 +1198,11 @@ AmrCoreAdv::ReadParameters ( amrex::Vector<int>& bc_lo, amrex::Vector<int>& bc_h
         pp.query("ml_output_std_fctr", m_ml_output_std_fctr);
         m_quantize_ml_output = false;
         pp.query("quantize_ml_output", m_quantize_ml_output);
+        // When restarting from a non-ML checkpoint, copy the particle number
+        // density (phi comp 1) into the ML density field (phi comp 0) so the
+        // ML model starts from particle data rather than the Gaussian solution.
+        m_ml_init_from_particle_ic = false;
+        pp.query("ml_init_from_particle_ic", m_ml_init_from_particle_ic);
         if (m_ml_t_df <= 0.0) {
             amrex::Abort("ml_t_df must be > 0.");
         }
@@ -2280,6 +2285,24 @@ AmrCoreAdv::ReadCheckpointFile ()
     for (int lev = 0; lev <= finest_level; ++lev) {
         VisMF::Read(phi_new[lev],
                     amrex::MultiFabFileFullPrefix(lev, restart_chkfile, "Level_", "phi"));
+        // Overwrite the ML density field (comp 0) with particle number density
+        // (comp 1) so the ML model's initial condition reflects the particle
+        // solution rather than the Gaussian diffusion solution from the checkpoint.
+        // Abort if restarting from an ML checkpoint: phi_hist and flux_hist are
+        // already populated, so overriding comp 0 here would be inconsistent.
+        if (m_flux_mode == FluxMode::ml && m_ml_init_from_particle_ic) {
+            if (has_ml_header) {
+                amrex::Abort("ml_init_from_particle_ic is only valid when restarting "
+                             "from a non-ML checkpoint. The restart file already "
+                             "contains ML history data.");
+            }
+            // Use a temporary to avoid passing the same MultiFab as both src and dst.
+            amrex::MultiFab tmp(phi_new[lev].boxArray(),
+                                phi_new[lev].DistributionMap(),
+                                1, phi_new[lev].nGrow());
+            amrex::MultiFab::Copy(tmp,          phi_new[lev], 1, 0, 1, phi_new[lev].nGrow());
+            amrex::MultiFab::Copy(phi_new[lev], tmp,          0, 0, 1, phi_new[lev].nGrow());
+        }
         if (m_flux_mode == FluxMode::ml && m_ml_history_len > 0 && has_ml_header) {
             VisMF::Read(*m_phi_hist[lev],
                         amrex::MultiFabFileFullPrefix(lev, restart_chkfile, "Level_", "phi_hist"));

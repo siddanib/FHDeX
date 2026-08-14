@@ -92,7 +92,8 @@ void FillMLStochFluxDir (int dir,
                          bool use_cuda, amrex::Real ml_input_scale,
                          amrex::Real ml_output_mn_fctr,
                          amrex::Real ml_output_std_fctr,
-                         bool quantize_ml_output)
+                         bool quantize_ml_output,
+                         bool external_potential_enabled)
 {
     if (module == nullptr) {
         amrex::Abort("ML flux mode requires a loaded TorchScript model.");
@@ -295,8 +296,11 @@ void FillMLStochFluxDir (int dir,
             }
             flux_val *= ml_output_std_fctr * std::sqrt(std::max(phiL + phiR, amrex::Real(0.0)));
             flux_val += ml_output_mn_fctr*(phiL-phiR);
-            // Quantization of Net particles crossing
-            if (quntz_l) {
+            // When external potential is active, defer quantization to
+            // compute_flux_{x,y}_quantized where it is applied to the combined
+            // ML + external potential flux. The limiter is always applied here
+            // to guard against unreasonable ML model outputs regardless.
+            if (quntz_l && !external_potential_enabled) {
                 phiL = std::floor(phiL);
                 phiR = std::floor(phiR);
                 amrex::Real rand_val = amrex::Random(engine);
@@ -307,6 +311,9 @@ void FillMLStochFluxDir (int dir,
                     flux_val = std::ceil(flux_val);
                 }
             }
+            // Limiter in ML convention (L→R positive): cap by the source
+            // cell's particle count to prevent the ML flux alone from
+            // draining a cell below zero.
             flux_val = std::min(flux_val, phiL);
             flux_val = std::max(flux_val, -phiR);
             stoch(i,j,k,0) = flux_val;
@@ -411,7 +418,8 @@ void advance_phi (MultiFab& phi_old,
             	                   ml_ctx->ml_input_scale,
             	                   ml_ctx->ml_output_mn_fctr,
             	                   ml_ctx->ml_output_std_fctr,
-            	                   ml_ctx->quantize_ml_output);
+            	                   ml_ctx->quantize_ml_output,
+            	                   external_potential.enabled);
             	// Keep shared faces/nodes consistent across ranks.
             	stochFlux[d].OverrideSync(geom.periodicity());
             }

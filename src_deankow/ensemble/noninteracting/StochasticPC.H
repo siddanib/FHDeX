@@ -3,6 +3,7 @@
 
 #include <AMReX_Math.H>
 #include <AMReX_Particles.H>
+#include <AMReX_ParmParse.H>
 
 #include <ExternalPotential.H>
 
@@ -60,14 +61,20 @@ public:
     StochasticPC (amrex::ParGDBBase* gdb)
         : amrex::ParticleContainer<RealIdx::ncomps, IntIdx::ncomps, 0, 0,
                                    amrex::DefaultAllocator>(gdb)
-        {}
+        {
+            amrex::ParmParse pp;
+            pp.query("stochastic_particle_init", m_stochastic_particle_init);
+        }
 
     StochasticPC (const amrex::Geometry            & geom,
                   const amrex::DistributionMapping & dmap,
                   const amrex::BoxArray            & ba)
         : amrex::ParticleContainer<RealIdx::ncomps, IntIdx::ncomps, 0, 0,
                                    amrex::DefaultAllocator>(geom, dmap, ba)
-        {}
+        {
+            amrex::ParmParse pp;
+            pp.query("stochastic_particle_init", m_stochastic_particle_init);
+        }
 
     void InitParticles (amrex::MultiFab& phi_fine,
                         ExternalPotential const& external_potential,
@@ -94,6 +101,9 @@ public:
 
 protected:
     amrex::ParticleLocator<amrex::DenseBins<amrex::Box> > m_reflux_particle_locator;
+    // When false, npart_in_cell = floor(phi*cell_vol) exactly — no stochastic
+    // rounding. Useful when phi*cell_vol is already an integer (e.g. piecewise_x).
+    bool m_stochastic_particle_init = true;
 };
 
 AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE
