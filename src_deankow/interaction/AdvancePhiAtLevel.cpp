@@ -20,11 +20,14 @@ AmrCoreAdv::AdvancePhiAtLevel (int lev, Real /*time*/, Real dt_lev, int /*iterat
         BoxArray ba = grids[lev];
         ba.surroundingNodes(i);
         fluxes[i].define(ba, dmap[lev], phi_new[lev].nComp(), 0);
+        fluxes[i].setVal(0.);
         stochFluxes[i].define(ba, dmap[lev], phi_new[lev].nComp(), 0);
         stochFluxes[i].setVal(0.);
     }
 
 //  compute convolution of U with phi to define interaction
+
+    if (pot.use_int_pot) {
 
         r2c_forward->forward(U, Uhat);
         r2c_forward->forward(phi_old[lev], Phihat);
@@ -54,7 +57,7 @@ AmrCoreAdv::AdvancePhiAtLevel (int lev, Real /*time*/, Real dt_lev, int /*iterat
           hack.setVal(0.);
           Real dx = geom[0].CellSize(0);
           Real dy = geom[0].CellSize(1);
-          
+
         for (MFIter mfi(hack); mfi.isValid(); ++mfi) {
               auto const& ub = hack[mfi].box();
               auto const& rho_arr = phi_old[lev][mfi].array();
@@ -85,7 +88,7 @@ AmrCoreAdv::AdvancePhiAtLevel (int lev, Real /*time*/, Real dt_lev, int /*iterat
 
 
                      hack_arr(i,j,k) += utemp * rho_arr(i,j,k)*dx*dy;
-                     
+
                   }
                   }
                     // hack_arr(i,j,k) = 512.*std::sin(2.*PI*i*dx);
@@ -95,7 +98,7 @@ AmrCoreAdv::AdvancePhiAtLevel (int lev, Real /*time*/, Real dt_lev, int /*iterat
 
 //                     amrex::Real ifact =(ip == 0) ? 1. : .5;
 //                     amrex::Real jfact =(jp == 0) ? 1. : .5;
-                     
+
                      Real r = std::sqrt(ip*ip*dx*dx+jp*jp*dy*dy);
                      amrex::Real eps, R, alpha;
                      eps = 0.0333;
@@ -107,7 +110,7 @@ AmrCoreAdv::AdvancePhiAtLevel (int lev, Real /*time*/, Real dt_lev, int /*iterat
                           amrex::Print() << " ip jp " << ip << " " << jp << " " << utemp << std::endl;
                      }
                      hack_arr(i,j,k) += utemp*rho_arr(i+ip,j+jp,k)*dx*dy;
-                     
+
 //                     hack_arr(i,j,k) += ifact*jfact*rho_arr(i+ip,j+jp,k)*dx*dy;
                   }
                   }
@@ -126,6 +129,10 @@ AmrCoreAdv::AdvancePhiAtLevel (int lev, Real /*time*/, Real dt_lev, int /*iterat
                               * geom[0].CellSize(2));
           const Real scaling = mesh_scale / geom[lev].Domain().d_numPts();
           C.mult(scaling, 0, 1);
+
+    } else {
+        C.setVal(0.);
+    }
 
 /*
 
@@ -147,7 +154,7 @@ AmrCoreAdv::AdvancePhiAtLevel (int lev, Real /*time*/, Real dt_lev, int /*iterat
     // We do this here so we can print the FABs for debugging
     phi_new[lev].setVal(0.0);
 
-    advance_phi(phi_old[lev], phi_new[lev], fluxes, stochFluxes, C, dt_lev, num_part,  diff_coeff, dorand,  geom[lev], bcs);
+    advance_phi(phi_old[lev], phi_new[lev], fluxes, stochFluxes, C, dt_lev, num_part,  diff_coeff, dorand,  geom[lev], bcs, pot);
 
     // Increment or decrement the flux registers by area and time-weighted fluxes
     // Note that the fluxes have already been scaled by dt and area

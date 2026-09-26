@@ -11,19 +11,29 @@
 using namespace amrex;
 
 void
-StochasticPC::InitParticles (MultiFab& phi_fine, Real num_part)
+StochasticPC::InitParticles (MultiFab& phi_fine, Real num_part, PotentialParams const& pot)
 {
     amrex::Print() << "calling InitParticles" << std::endl;
     amrex::Real factor = -1.;
-    AddParticles(phi_fine, BoxArray{}, factor, num_part);
+    AddParticles(phi_fine, BoxArray{}, factor, num_part, pot);
 }
 
+// TODO(3D): this aliases phi onto RealIdx::zold. In 2D zold is an unused spare
+// real, so that is harmless, but in 3D zold IS the particle's old z position --
+// the value getOldCell() reads to decide which cell a particle came from for the
+// crse<->fine reflux. Calling this in 3D corrupts every particle's old cell and
+// breaks RefluxCrseToFine/RefluxFineToCrse. Currently inert: the only caller is
+// ParticleData::writePlotFile, whose one call site (AmrCoreAdv.cpp, in
+// WritePlotFile) is commented out. Fix by adding a dedicated "color" real
+// component to RealIdx rather than reusing zold.
 void
 StochasticPC::ColorParticlesWithPhi (MultiFab const& phi)
 {
     BL_PROFILE("StochasticPC::ColorParticlesWithPhi");
     const int lev = 1;
-    const auto dx = Geom(lev).CellSizeArray();
+    const auto dxi    = Geom(lev).InvCellSizeArray();
+    const auto plo    = Geom(lev).ProbLoArray();
+    const auto domain = Geom(lev).Domain();
 
     amrex::Print() << "PHIARR BOX " << phi.boxArray() << std::endl;
 
@@ -42,17 +52,21 @@ StochasticPC::ColorParticlesWithPhi (MultiFab const& phi)
         amrex::ParallelFor(np, [=] AMREX_GPU_DEVICE (int n)
         {
             ParticleType& p = pstruct[n];
-            int i = static_cast<int>(p.pos(0) / dx[0]);
-            int j = static_cast<int>(p.pos(1) / dx[1]);
-            int k = 0;
-            p.rdata(RealIdx::zold) = phi_arr(i,j,k);
+            // Use the same helper getNewCell/getOldCell use: the raw divide
+            // omitted prob_lo and domain.smallEnd(), and static_cast truncates
+            // toward zero instead of flooring, so particles just outside the
+            // low side of the domain -- which AddParticles deliberately allows
+            // -- collapsed onto cell 0.
+            const amrex::IntVect iv = amrex::getParticleCell(p, plo, dxi, domain);
+            p.rdata(RealIdx::zold) = phi_arr(iv,0);
         });
     }
 }
 
 void
 StochasticPC:: AddParticles (MultiFab& phi_fine, const BoxArray& ba_to_exclude,
-                             amrex::Real factor, amrex::Real num_part)
+                             amrex::Real factor, amrex::Real num_part,
+                             PotentialParams const& pot)
 {
     BL_PROFILE("StochasticPC::AddParticles");
 
@@ -74,8 +88,9 @@ StochasticPC:: AddParticles (MultiFab& phi_fine, const BoxArray& ba_to_exclude,
     // We need to allow particles to be created outside the domain in cells next
     // to the particle region
     Box gdomain(Geom(lev).Domain());
-    if (Geom(lev).isPeriodic(0)) gdomain.grow(0,1);
-    if (Geom(lev).isPeriodic(1)) gdomain.grow(1,1);
+    for (int idim = 0; idim < AMREX_SPACEDIM; ++idim) {
+        if (Geom(lev).isPeriodic(idim)) { gdomain.grow(idim,1); }
+    }
 
 #ifdef AMREX_USE_OMP
 #pragma omp parallel if (amrex::Gpu::notInLaunchRegion())
@@ -145,11 +160,10 @@ StochasticPC:: AddParticles (MultiFab& phi_fine, const BoxArray& ba_to_exclude,
         amrex::Print() << "INIT: NEW SIZE OF PARTICLES IN TILE BOX " << tile_box << " " << new_size << std::endl;
 
 
-        int ext_pot = 0;
-        amrex::Real alpha = .25;
-        amrex::Real beta = .75;
-        amrex::Real gamma = 5.e-4;
-        gamma = 1.1e-3;
+        const amrex::Real ep_alpha = pot.ep_alpha;
+        const amrex::Real ep_beta  = pot.ep_beta;
+        const amrex::Real ep_gamma = pot.ep_gamma;
+        const int use_ext_pot = pot.use_ext_pot;
 
 
         // now fill in the data
@@ -171,14 +185,16 @@ StochasticPC:: AddParticles (MultiFab& phi_fine, const BoxArray& ba_to_exclude,
 #elif (AMREX_SPACEDIM == 3)
                 Real r[3] = {amrex::Random(engine), amrex::Random(engine), amrex::Random(engine)};
 #endif
-                if(factor > 0.)
+                // sample from the external well only if it is on; otherwise
+                // keep the uniform-in-cell r[] drawn above
+                if(factor > 0. && use_ext_pot == 1)
                 {
                     Real xm = plo[0] + i*dx[0];
                     Real xp = xm + dx[0];
                     Real ym = plo[1] + j*dx[1];
                     Real yp = ym + dx[1];
-                    Real vpx = (xp - beta)*(xp-beta)*(xp-alpha)*(xp-alpha);
-                    Real vmx = (xm - beta)*(xm-beta)*(xm-alpha)*(xm-alpha);
+                    Real vpx = (xp - ep_beta)*(xp-ep_beta)*(xp-ep_alpha)*(xp-ep_alpha);
+                    Real vmx = (xm - ep_beta)*(xm-ep_beta)*(xm-ep_alpha)*(xm-ep_alpha);
                     Real vpy = (yp - .5)*(yp - .5)*(yp - .5)*(yp - .5);
                     Real vmy = (ym - .5)*(ym - .5)*(ym - .5)*(ym - .5);
                     Real vsubx = (vpx - vmx)/dx[0];
@@ -188,7 +204,7 @@ StochasticPC:: AddParticles (MultiFab& phi_fine, const BoxArray& ba_to_exclude,
 
                     if(std::abs(vsubx) >= 1.e-12)
                     {
-                       sampx = -gamma * std::log(1. - r[0]*(1. - std::exp(-2*vsubx*dx[0]/gamma)))/(2.*vsubx);
+                       sampx = -ep_gamma * std::log(1. - r[0]*(1. - std::exp(-2*vsubx*dx[0]/ep_gamma)))/(2.*vsubx);
 #ifndef AMREX_USE_GPU
                        if( sampx < 0. || sampx > dx[0])
                        {
@@ -203,7 +219,7 @@ StochasticPC:: AddParticles (MultiFab& phi_fine, const BoxArray& ba_to_exclude,
 
                     if(std::abs(vsuby) >= 1.e-12)
                     {
-                       sampy = -gamma * std::log(1. - r[1]*(1. - std::exp(-2*vsuby*dx[1]/gamma)))/(2.*vsuby);
+                       sampy = -ep_gamma * std::log(1. - r[1]*(1. - std::exp(-2*vsuby*dx[1]/ep_gamma)))/(2.*vsuby);
 #ifndef AMREX_USE_GPU
                        if( sampy < 0. || sampy > dx[1])
                        {
@@ -375,6 +391,8 @@ StochasticPC::RefluxCrseToFine (const BoxArray& ba_to_keep, MultiFab& phi_for_re
     }
     m_reflux_particle_locator.setGeometry(Geom(lev));
 
+    const auto is_per = Geom(lev).isPeriodicArray();
+
     auto assign_grid = m_reflux_particle_locator.getGridAssignor();
 
     for (ParIterType pti(*this, lev); pti.isValid(); ++pti)
@@ -395,7 +413,19 @@ StochasticPC::RefluxCrseToFine (const BoxArray& ba_to_keep, MultiFab& phi_for_re
                 auto new_pos = getNewCell(p, plo_lev, dxi_lev, domain_lev);
 
                 if ( (assign_grid(old_pos).first < 0) && (assign_grid(new_pos).first >= 0)) {
-                   Gpu::Atomic::AddNoRet(&phi_arr(old_pos,0), -1.0);
+                   // The deposit belongs in the cell the particle came from.  That cell is
+                   // normally inside this FAB, but a particle that crossed a periodic
+                   // boundary this step has an old cell on the far side of the domain,
+                   // because AdvectWithRandomWalk wrapped its position.  Undo the wrap so
+                   // the deposit lands next to the new cell instead of out of bounds.
+                   if (Box(phi_arr).contains(old_pos)) {
+                      Gpu::Atomic::AddNoRet(&phi_arr(old_pos,0), -1.0);
+                   } else {
+                      auto shifted_pos = periodicCorrectOldCell(old_pos, new_pos,
+                                                                is_per, domain_lev);
+                      AMREX_ASSERT(Box(phi_arr).contains(shifted_pos));
+                      Gpu::Atomic::AddNoRet(&phi_arr(shifted_pos,0), -1.0);
+                   }
                 }
             });
         } // if not in ba_to_keep
@@ -437,6 +467,11 @@ StochasticPC::AdvectWithRandomWalk (int lev, Real dt, Real diff_coeff)
             incz = amrex::RandomNormal(0.,stddev,engine);
 #endif
 
+             // TODO(3D): this branch is an intrinsically 2D surface model -- it
+             // updates pos(0) and pos(1) only, so incz is silently dropped and
+             // particles cannot move in z. Inert while on_surf is hard-coded to 0
+             // above; must be generalized (or explicitly rejected in 3D) before
+             // on_surf is ever turned on at AMREX_SPACEDIM == 3.
              if(on_surf == 1){
 
                  amrex::Real amp = 0.1;
@@ -452,14 +487,18 @@ StochasticPC::AdvectWithRandomWalk (int lev, Real dt, Real diff_coeff)
 
                  det = 1 + amp*amp*(cosx*cosx*siny*siny+sinx*sinx*cosy*cosy);
 
-                 fx = amp*amp*(2. + amp*amp * (cosx*cosx + cosy*cosy)*sinx*cosx*siny*siny);
-                 fy = amp*amp*(2. + amp*amp * (cosx*cosx + cosy*cosy)*siny*cosy*sinx*sinx);
+                 // The geometric factor multiplies the whole amp*amp*(...) group; folding it
+                 // inside the sum left a spurious drift of amp*amp/(det*det) on sin(x) = 0,
+                 // where the Ito drift on the surface must vanish by symmetry.
+                 fx = amp*amp*(2. + amp*amp * (cosx*cosx + cosy*cosy))*sinx*cosx*siny*siny;
+                 fy = amp*amp*(2. + amp*amp * (cosx*cosx + cosy*cosy))*siny*cosy*sinx*sinx;
 
                  fx = fx / (2.*det*det);
                  fy = fy / (2.*det*det);
 
-                 amrex::Real detm1 = det - 1.;
-                 amrex::Real cfac = (1. - 1./std::sqrt(1+detm1))/detm1;
+                 // (1 - 1/sqrt(det))/(det-1) == 1/(det + sqrt(det)) exactly, but the first
+                 // form is 0/0 as det -> 1 (a flat patch of surface).
+                 amrex::Real cfac = 1./(det + std::sqrt(det));
 
                  sig11 = 1. - cfac * amp*amp * cosx*cosx*siny*siny;
                  sig22 = 1. - cfac * amp*amp * cosy*cosy*sinx*sinx;
@@ -469,10 +508,12 @@ StochasticPC::AdvectWithRandomWalk (int lev, Real dt, Real diff_coeff)
                  amrex::Real updatex = fx*dt + sig11*incx + sig12*incy;
                  amrex::Real updatey = fy*dt + sig21*incx + sig22*incy;
 
+#ifndef AMREX_USE_GPU
                  if(std::abs(updatex) > dx[0] || std::abs(updatey) > dx[1])
                  {
                     amrex::Print{} << "at " << xloc << " " << yloc << " step " << updatex << " " << updatey << " with inc " << incx << " " << incy << " mesh " << dx[0] << " " << dx[1] << std::endl;
                  }
+#endif
 
                  updatex = std::max(-dx[0], std::min( dx[0], updatex));
                  updatey = std::max(-dx[1], std::min( dx[1], updatey));
@@ -522,20 +563,17 @@ StochasticPC::AdvectWithRandomWalk (int lev, Real dt, Real diff_coeff)
 
 void
 StochasticPC::AdvectParticles (int lev, Real dt,
-                                       Real interaction_range,
-                                       Real interaction_strength,
-                                       Real interaction_scale,
-                                       Real num_part,
-                                       Real diff_coeff,
-                                       int use_ext_pot,
-                                       bool eval_current,
-                                       Array<MultiFab, AMREX_SPACEDIM>& integrated_current)
+                               PotentialParams const& pot,
+                               Real num_part,
+                               Real diff_coeff,
+                               bool eval_current,
+                               Array<MultiFab, AMREX_SPACEDIM>& integrated_current)
 {
     BL_PROFILE("StochasticPC::AdvectParticles");
     const auto dx = Geom(lev).CellSizeArray();
-    const auto dxi = Geom(lev).InvCellSizeArray();
     const auto p_lo = Geom(lev).ProbLoArray();
     const auto p_hi = Geom(lev).ProbHiArray();
+    const auto dxi = Geom(lev).InvCellSizeArray();
     const auto domain = Geom(lev).Domain();
 
     AMREX_D_TERM( bool is_periodic_in_x = Geom(lev).isPeriodic(0);,
@@ -546,6 +584,10 @@ StochasticPC::AdvectParticles (int lev, Real dt,
                   const Real Ly = p_hi[1] - p_lo[1];,
                   const Real Lz = p_hi[2] - p_lo[2];);
 
+    // pair interactions are on only with the interaction potential and a cutoff
+    const Real interaction_range = (pot.use_int_pot) ? pot.ip_range : 0.0;
+    const int use_ext_pot = pot.use_ext_pot;
+
     if (interaction_range > 0.0) {
         Real Lmin = std::numeric_limits<Real>::max();
         for (int idim = 0; idim < AMREX_SPACEDIM; ++idim) {
@@ -553,10 +595,7 @@ StochasticPC::AdvectParticles (int lev, Real dt,
             Lmin = std::min(Lmin, L);
         }
         if (interaction_range >= 0.5 * Lmin) {
-            amrex::Abort("interaction_range must be strictly less than half the domain size");
-        }
-        if (interaction_scale <= 0.0) {
-            amrex::Abort("interaction_scale must be positive");
+            amrex::Abort("amr.ip_range must be strictly less than half the domain size");
         }
     }
 
@@ -564,10 +603,10 @@ StochasticPC::AdvectParticles (int lev, Real dt,
         return;
     }
 
-    amrex::Real alpha = .25;
-    amrex::Real beta = .75;
-    amrex::Real gamma = 5.e-4;
-    gamma = 1.1e-3;
+    const amrex::Real ep_alpha = pot.ep_alpha;
+    const amrex::Real ep_beta  = pot.ep_beta;
+    const amrex::Real ep_gamma = pot.ep_gamma;
+    const PotentialParams pot_loc = pot;
 
 //    static bool s_params_inited = false;
 //    static int s_print_forces = 0;
@@ -581,15 +620,9 @@ StochasticPC::AdvectParticles (int lev, Real dt,
 
     const Real rcut = interaction_range;
     const Real rcut2 = rcut * rcut;
-    const Real inv_scale3 = (interaction_scale > 0.0)
-        ? 1.0 / (interaction_scale * interaction_scale * interaction_scale)
-        : 0.0;
-//    const Real strength = (num_part > 0.0) ? (interaction_strength / num_part) : 0.0;
-    const Real strength = interaction_strength / num_part;
+    const Real inv_num_part = 1.0 / num_part;
     const Real stddev = std::sqrt(2.0 * diff_coeff * dt);
     const int on_surf = 0;
-
-//    amrex::Print{} << "interation_strength " << interaction_strength << std::endl;
 
     int required_cells = 0;
     if (interaction_range > 0.0) {
@@ -600,7 +633,7 @@ StochasticPC::AdvectParticles (int lev, Real dt,
         required_cells = static_cast<int>(std::ceil(interaction_range / dxmin));
         required_cells = std::max(1, required_cells);
         if (required_cells > m_neighbor_cells) {
-            amrex::Abort("interaction_range requires more neighbor cells than configured");
+            amrex::Abort("amr.ip_range requires more neighbor cells than configured");
         }
     }
 
@@ -689,14 +722,19 @@ StochasticPC::AdvectParticles (int lev, Real dt,
             Real dpy = 0.0;
             Real dpz = 0.0;
 
+            // TODO(3D): no z component. dpz is never incremented here, so with
+            // amr.use_ext_pot = 1 in 3D the particles feel no external force in z
+            // while compute_flux_z (mykernel.H) does apply one -- the mesh and
+            // particle halves of the hybrid then disagree. Needs a Vsubz to match
+            // whatever z potential mykernel.H ends up using.
             if (use_ext_pot == 1) {
                 amrex::Real xloc, yloc;
                 amrex::Real Vsubx, Vsuby;
 
                 xloc = p.pos(0);
                 yloc = p.pos(1);
-                Vsubx = 2.*(xloc - beta) * (xloc - alpha)* (2.*xloc - alpha - beta) / gamma;
-                Vsuby = 0.5*4.*(yloc - .5)*(yloc - .5)*(yloc - .5) / gamma;
+                Vsubx = 2.*(xloc - ep_beta) * (xloc - ep_alpha)* (2.*xloc - ep_alpha - ep_beta) / ep_gamma;
+                Vsuby = 0.5*4.*(yloc - .5)*(yloc - .5)*(yloc - .5) / ep_gamma;
 
                 dpx += -dt*Vsubx;
                 dpy += -dt*Vsuby;
@@ -741,9 +779,8 @@ StochasticPC::AdvectParticles (int lev, Real dt,
                     if (r2 >= rcut2 || r2 == 0.0) continue;
 
                     const Real r = std::sqrt(r2);
-                    const Real r3 = r2 * r;
-                    const Real U = strength * std::exp(-r3 * inv_scale3);
-                    const Real factor = -3.0 * inv_scale3 * U * r;
+                    // force on this particle is (dU/dr)/r * (x_q - x_p), per particle weight
+                    const Real factor = ip_dUdr_over_r(r, pot_loc) * inv_num_part;
 
 
                     dpx += dt * factor * dxij;
@@ -769,7 +806,7 @@ StochasticPC::AdvectParticles (int lev, Real dt,
 
     } else {
 
-        // interaction_range <= 0: no neighbor forces
+        // no pair interactions: external potential and random walk only
         amrex::ParallelForRNG(np,
         [=] AMREX_GPU_DEVICE (int i, RandomEngine const& engine) noexcept
         {
@@ -784,13 +821,14 @@ StochasticPC::AdvectParticles (int lev, Real dt,
             Real dpy = 0.0;
             Real dpz = 0.0;
 
+            // TODO(3D): no z component -- same gap as the neighbor-list branch above.
             if (use_ext_pot == 1) {
                 Real xloc = p.pos(0);
                 Real yloc = p.pos(1);
 
-                Real Vsubx = 2.*(xloc - beta) * (xloc - alpha) *
-                              (2.*xloc - alpha - beta) / gamma;
-                Real Vsuby = 0.5*4.*(yloc - .5)*(yloc - .5)*(yloc - .5) / gamma;
+                Real Vsubx = 2.*(xloc - ep_beta) * (xloc - ep_alpha) *
+                              (2.*xloc - ep_alpha - ep_beta) / ep_gamma;
+                Real Vsuby = 0.5*4.*(yloc - .5)*(yloc - .5)*(yloc - .5) / ep_gamma;
 
                 dpx += -dt*Vsubx;
                 dpy += -dt*Vsuby;
@@ -830,6 +868,10 @@ StochasticPC::AdvectParticles (int lev, Real dt,
             Real incy = incyp[i];
             Real incz = inczp[i];
 
+            // TODO(3D): 2D-only surface model -- see AdvectWithRandomWalk. totalz
+            // is left at 0 in this branch (the "totalz = dpz + incz" line lives in
+            // the else branch), so both the interaction force and the random
+            // increment in z are discarded. Inert while on_surf is 0.
             if (on_surf == 1) {
                 amrex::Real amp = 0.1;
                 amrex::Real sinx,siny,cosx,cosy,det,fx,fy,sig11,sig12,sig21,sig22;
@@ -844,14 +886,18 @@ StochasticPC::AdvectParticles (int lev, Real dt,
 
                 det = 1 + amp*amp*(cosx*cosx*siny*siny+sinx*sinx*cosy*cosy);
 
-                fx = amp*amp*(2. + amp*amp * (cosx*cosx + cosy*cosy)*sinx*cosx*siny*siny);
-                fy = amp*amp*(2. + amp*amp * (cosx*cosx + cosy*cosy)*siny*cosy*sinx*sinx);
+                // The geometric factor multiplies the whole amp*amp*(...) group; folding it
+                // inside the sum left a spurious drift of amp*amp/(det*det) on sin(x) = 0,
+                // where the Ito drift on the surface must vanish by symmetry.
+                fx = amp*amp*(2. + amp*amp * (cosx*cosx + cosy*cosy))*sinx*cosx*siny*siny;
+                fy = amp*amp*(2. + amp*amp * (cosx*cosx + cosy*cosy))*siny*cosy*sinx*sinx;
 
                 fx = fx / (2.*det*det);
                 fy = fy / (2.*det*det);
 
-                amrex::Real detm1 = det - 1.;
-                amrex::Real cfac = (1. - 1./std::sqrt(1+detm1))/detm1;
+                // (1 - 1/sqrt(det))/(det-1) == 1/(det + sqrt(det)) exactly, but the first
+                // form is 0/0 as det -> 1 (a flat patch of surface).
+                amrex::Real cfac = 1./(det + std::sqrt(det));
 
                 sig11 = 1. - cfac * amp*amp * cosx*cosx*siny*siny;
                 sig22 = 1. - cfac * amp*amp * cosy*cosy*sinx*sinx;

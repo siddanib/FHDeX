@@ -1,6 +1,18 @@
 #ifndef MY_KERNEL_H_
 #define MY_KERNEL_H_
 
+// DK_EXT_POT_FORM selects which external potential the drift is built from:
+//   1 = product of caps(y) and capr(x)   (the form these runs use)
+//   2 = sin/cos of (x+y)/2 and (x-y)/2
+//   3 = sin^2(x) sin^2(y)
+// The three used to be an #if 1 / #else / "elseif" chain in which the third
+// alternative was introduced by a bare `elseif` -- not a preprocessor
+// directive -- so selecting anything but the first branch did not compile.
+#ifndef DK_EXT_POT_FORM
+#define DK_EXT_POT_FORM 1
+#endif
+
+
 #include <AMReX_FArrayBox.H>
 #include <AMReX_Print.H>
 
@@ -19,6 +31,7 @@ void init_phi (int i, int j, int k,
 #if(AMREX_SPACEDIM > 2)
     cellvol *=dx[2];
 #endif
+
 
     if(pure_part == 0){
 
@@ -40,13 +53,16 @@ void init_phi (int i, int j, int k,
     } else {
 
        phi(i,j,k,0) = 1./surf_area;
+       x = prob_lo[0] + (i+Real(0.5)) * dx[0] -0.5 ;
+       y = prob_lo[1] + (j+Real(0.5)) * dx[1] -0.5 ;
+       phi(i,j,k,0) = std::exp(-(x*x+y*y)/.1);
 
     }
 
     } else {
 
-   Real x = prob_lo[0] + (i+Real(0.5)) * dx[0] -0.5*TWOPI ;
-    Real y = prob_lo[1] + (j+Real(0.5)) * dx[1] -0.5*TWOPI ;
+   Real x = prob_lo[0] + (i+Real(0.5)) * dx[0] -0.5 ;
+    Real y = prob_lo[1] + (j+Real(0.5)) * dx[1] -0.5 ;
 //
 #if 0
     if(x*x+y*y < .01*TWOPI*TWOPI){
@@ -57,7 +73,7 @@ void init_phi (int i, int j, int k,
 #else
       phi(i,j,k,0) = 10.1;
 #endif
-     
+
 
     }
 
@@ -383,15 +399,15 @@ void compute_flux_x (int i, int j, int k,
     }
 #endif
 
-//	amrex::Real phiavg = 2.*(phi(i,j,k)*phi(i-1,j,k))/(phi(i,j,k)+phi(i-1,j,k)+1.e-16);
-	//amrex::Real phiavg = 2.*(phip*phim)/(phip+phim+1.e-16);
-	//amrex::Real phiavg = 0.5*(phip+phim);
+//    amrex::Real phiavg = 2.*(phi(i,j,k)*phi(i-1,j,k))/(phi(i,j,k)+phi(i-1,j,k)+1.e-16);
+    //amrex::Real phiavg = 2.*(phip*phim)/(phip+phim+1.e-16);
+    //amrex::Real phiavg = 0.5*(phip+phim);
 
-	// HACK TO COMMENT OUT STOCHASTIC TERMS
-	// phiavg = 0.;
+    // HACK TO COMMENT OUT STOCHASTIC TERMS
+    // phiavg = 0.;
 
         //fluxx(i,j,k,0) = 0.5*(phi(i,j,k,0)-phi(i-1,j,k,0)) * dxinv
-    	//                    + stochfluxx(i,j,k) * std::sqrt(phiavg);
+        //                    + stochfluxx(i,j,k) * std::sqrt(phiavg);
 
 //          if(ext_pot == 1) {
 //
@@ -464,12 +480,13 @@ void compute_flux_x (int i, int j, int k,
 
              amrex::Real Vsubx;
              amrex::Real Vsuby;
-#if 1
-
+             // caps/capsy/capr/caprx are used by the num_flux == 4 branch below
+             // as well, so they stay at this scope.
              amrex::Real caps, capsy, capr, caprx;
 
-          
           if(num_flux == 1){
+
+#if (DK_EXT_POT_FORM == 1)
 
              caps = 0;
              capsy = 0;
@@ -490,7 +507,7 @@ void compute_flux_x (int i, int j, int k,
              Vsuby = capsy/gamma;
 
 
-#else
+#elif (DK_EXT_POT_FORM == 2)
              amrex::Real sinxpy = std::sin(0.5*(xloc+yloc));
              amrex::Real cosxpy = std::cos(0.5*(xloc+yloc));
              amrex::Real sinxmy = std::sin(0.5*(xloc-yloc));
@@ -498,7 +515,7 @@ void compute_flux_x (int i, int j, int k,
 
              Vsubx = (sinxpy*cosxpy*sinxmy*sinxmy + sinxpy*sinxpy*sinxmy*cosxmy)/gamma;
              Vsuby = (sinxpy*cosxpy*sinxmy*sinxmy - sinxpy*sinxpy*sinxmy*cosxmy)/gamma;
-elseif
+#else
              amrex::Real sinx,cosx,siny,cosy;
 
              sinx = std::sin(xloc);
@@ -539,7 +556,7 @@ elseif
 **/
 
                 capsy = -3*std::cos(yloc/2. - 0.41887902047863906*std::cos(xloc))*std::pow(std::sin(yloc/2. - 0.41887902047863906*std::cos(xloc)),5);
-                caprx = -0.27890625*std::sin(3*xloc) - 0.05625*std::sin(4*xloc) - 0.01171875*std::sin(5*xloc) + 
+                caprx = -0.27890625*std::sin(3*xloc) - 0.05625*std::sin(4*xloc) - 0.01171875*std::sin(5*xloc) +
                         std::sin(xloc)*(-0.9046875 - 2.175*std::cos(xloc) - 2.5132741228718345*std::cos(0.5*yloc - 0.41887902047863906*std::cos(xloc))*
                         std::pow(std::sin(0.5*yloc - 0.41887902047863906*std::cos(xloc)),5));
 
@@ -558,7 +575,7 @@ elseif
              fluxx(i,j,k,1) +=  phi(i-1,j,k,0)*det(i-1,j,k,1)*(gmet(i-1,j,k,0)*Vsub_x[2] + gmet(i-1,j,k,1)*Vsub_y[2]);
              fluxx(i,j,k,2) +=  phi(i,j,k,0)*det(i,j,k,1)*(gmet(i,j,k,0)*Vsub_x[3] + gmet(i,j,k,1)*Vsub_y[3]);
              fluxx(i,j,k,3) +=  phi(i-1,j,k,0)*det(i-1,j,k,1)*(gmet(i-1,j,k,0)*Vsub_x[2] + gmet(i-1,j,k,1)*Vsub_y[2]);
-         
+
           }
 
           }
@@ -596,13 +613,13 @@ elseif
              sqrphi = std::sqrt(std::max(phi_loc,0.));
              fluxx(i,j,k,1) +=  2.*std::sqrt(2./num_part)*det(i-1,j,k,2)*sqrphi*(sqrgmet(i-1,j,k,0)*stochfluxx(i-1,j,k,1)+sqrgmet(i-1,j,k,1)*stochfluxy(i-1,j,k,1));
 
-             phi_loc = phi(i-1,j,k,0);
-             sqrphi = std::sqrt(std::max(phi_loc,0.));
-             fluxx(i,j,k,2) += 2.* std::sqrt(2./num_part)*det(i-1,j,k,2)*sqrphi*(sqrgmet(i-1,j,k,0)*stochfluxx(i-1,j,k,2)+sqrgmet(i-1,j,k,1)*stochfluxy(i-1,j,k,2));
-
              phi_loc = phi(i,j,k,0);
              sqrphi = std::sqrt(std::max(phi_loc,0.));
-             fluxx(i,j,k,3) += 2.* std::sqrt(2./num_part)*det(i,j,k,2)*sqrphi*(sqrgmet(i,j,k,0)*stochfluxx(i,j,k,3)+sqrgmet(i,j,k,1)*stochfluxy(i,j,k,3));
+             fluxx(i,j,k,2) += 2.* std::sqrt(2./num_part)*det(i,j,k,2)*sqrphi*(sqrgmet(i,j,k,0)*stochfluxx(i,j,k,2)+sqrgmet(i,j,k,1)*stochfluxy(i,j,k,2));
+
+             phi_loc = phi(i-1,j,k,0);
+             sqrphi = std::sqrt(std::max(phi_loc,0.));
+             fluxx(i,j,k,3) += 2.* std::sqrt(2./num_part)*det(i-1,j,k,2)*sqrphi*(sqrgmet(i-1,j,k,0)*stochfluxx(i-1,j,k,3)+sqrgmet(i-1,j,k,1)*stochfluxy(i-1,j,k,3));
           }
 //          amrex::Print() << " x flux " << i << " " << j << " " << fluxx(i,j,k,0) << std::endl;
 }
@@ -710,21 +727,21 @@ void compute_flux_y (int i, int j, int k,
     }
 #endif
 
-//	amrex::Real phiavg = 2.*(phi(i,j,k)*phi(i-1,j,k))/(phi(i,j,k)+phi(i-1,j,k)+1.e-16);
-	//amrex::Real phiavg = 2.*(phip*phim)/(phip+phim+1.e-16);
-	//amrex::Real phiavg = 0.5*(phip+phim);
+//    amrex::Real phiavg = 2.*(phi(i,j,k)*phi(i-1,j,k))/(phi(i,j,k)+phi(i-1,j,k)+1.e-16);
+    //amrex::Real phiavg = 2.*(phip*phim)/(phip+phim+1.e-16);
+    //amrex::Real phiavg = 0.5*(phip+phim);
 
-	// HACK TO COMMENT OUT STOCHASTIC TERMS
-	// phiavg = 0.;
+    // HACK TO COMMENT OUT STOCHASTIC TERMS
+    // phiavg = 0.;
 
         //fluxx(i,j,k,0) = 0.5*(phi(i,j,k,0)-phi(i-1,j,k,0)) * dxinv
-    	//                    + stochfluxx(i,j,k) * std::sqrt(phiavg);
+        //                    + stochfluxx(i,j,k) * std::sqrt(phiavg);
 
 //          if(ext_pot == 1) {
 //
 //             amrex::Real yloc;
 //             yloc = j / dyinv;
-//	     amrex::Real phiavg = 0.5*(phip+phim);
+//         amrex::Real phiavg = 0.5*(phip+phim);
 
  //            amrex::Real Vsuby;
 
@@ -791,14 +808,16 @@ void compute_flux_y (int i, int j, int k,
              amrex::Real Vsubx;
              amrex::Real Vsuby;
 
-#if 1
-
+             // caps/capsy/capr/caprx are used by the num_flux == 4 branch below
+             // as well, so they stay at this scope.
              amrex::Real caps, capsy, capr, caprx;
 
           if(num_flux == 1){
 
              xloc = (i+0.5) / dxinv;
              yloc = (j+0.5) / dyinv;
+
+#if (DK_EXT_POT_FORM == 1)
 
              caps = 0;
              capsy = 0;
@@ -818,7 +837,7 @@ void compute_flux_y (int i, int j, int k,
              Vsubx = caprx/gamma;
              Vsuby = capsy/gamma;
 
-#else
+#elif (DK_EXT_POT_FORM == 2)
 
              amrex::Real sinxpy = std::sin(0.5*(xloc+yloc));
              amrex::Real cosxpy = std::cos(0.5*(xloc+yloc));
@@ -827,7 +846,7 @@ void compute_flux_y (int i, int j, int k,
 
              Vsubx = (sinxpy*cosxpy*sinxmy*sinxmy + sinxpy*sinxpy*sinxmy*cosxmy)/gamma;
              Vsuby = (sinxpy*cosxpy*sinxmy*sinxmy - sinxpy*sinxpy*sinxmy*cosxmy)/gamma;
-elseif
+#else
              amrex::Real sinx,cosx,siny,cosy;
 
              sinx = std::sin(xloc);
@@ -869,7 +888,7 @@ elseif
 */
 
                 capsy = -3*std::cos(yloc/2. - 0.41887902047863906*std::cos(xloc))*std::pow(std::sin(yloc/2. - 0.41887902047863906*std::cos(xloc)),5);
-                caprx = -0.27890625*std::sin(3*xloc) - 0.05625*std::sin(4*xloc) - 0.01171875*std::sin(5*xloc) + 
+                caprx = -0.27890625*std::sin(3*xloc) - 0.05625*std::sin(4*xloc) - 0.01171875*std::sin(5*xloc) +
                         std::sin(xloc)*(-0.9046875 - 2.175*std::cos(xloc) - 2.5132741228718345*std::cos(0.5*yloc - 0.41887902047863906*std::cos(xloc))*
                         std::pow(std::sin(0.5*yloc - 0.41887902047863906*std::cos(xloc)),5));
 
@@ -920,13 +939,13 @@ elseif
              sqrphi = std::sqrt(std::max(phi_loc,0.));
              fluxy(i,j,k,1) += 2.* std::sqrt(2./num_part)*det(i,j-1,k,2)*sqrphi*(sqrgmet(i,j-1,k,2)*stochfluxx(i,j-1,k,1)+sqrgmet(i,j-1,k,3)*stochfluxy(i,j-1,k,1));
 
-             phi_loc = phi(i,j,k,0);
-             sqrphi = std::sqrt(std::max(phi_loc,0.));
-             fluxy(i,j,k,2) += 2.* std::sqrt(2./num_part)*det(i,j,k,2)*sqrphi*(sqrgmet(i,j,k,2)*stochfluxx(i,j,k,2)+sqrgmet(i,j,k,3)*stochfluxy(i,j,k,2));
-
              phi_loc = phi(i,j-1,k,0);
              sqrphi = std::sqrt(std::max(phi_loc,0.));
-             fluxy(i,j,k,3) += 2.* std::sqrt(2./num_part)*det(i,j-1,k,2)*sqrphi*(sqrgmet(i,j-1,k,2)*stochfluxx(i,j-1,k,3)+sqrgmet(i,j-1,k,3)*stochfluxy(i,j-1,k,3));
+             fluxy(i,j,k,2) += 2.* std::sqrt(2./num_part)*det(i,j-1,k,2)*sqrphi*(sqrgmet(i,j-1,k,2)*stochfluxx(i,j-1,k,2)+sqrgmet(i,j-1,k,3)*stochfluxy(i,j-1,k,2));
+
+             phi_loc = phi(i,j,k,0);
+             sqrphi = std::sqrt(std::max(phi_loc,0.));
+             fluxy(i,j,k,3) += 2.* std::sqrt(2./num_part)*det(i,j,k,2)*sqrphi*(sqrgmet(i,j,k,2)*stochfluxx(i,j,k,3)+sqrgmet(i,j,k,3)*stochfluxy(i,j,k,3));
 
           }
 //          amrex::Print() << " x flux " << i << " " << j << " " << fluxx(i,j,k,0) << std::endl;
@@ -982,15 +1001,15 @@ void compute_flux_y (int i, int j, int k,
         stofact = 1.;
 
     }
-//	amrex::Real phiavg = 2.*(phi(i,j,k)*phi(i,j-1,k))/(phi(i,j,k)+phi(i,j-1,k)+1.e-16);
-	//amrex::Real phiavg = 2.*(phip*phim)/(phip+phim+1.e-16);
-	//amrex::Real phiavg = 0.5*(phip+phim);
+//    amrex::Real phiavg = 2.*(phi(i,j,k)*phi(i,j-1,k))/(phi(i,j,k)+phi(i,j-1,k)+1.e-16);
+    //amrex::Real phiavg = 2.*(phip*phim)/(phip+phim+1.e-16);
+    //amrex::Real phiavg = 0.5*(phip+phim);
 
-	// HACK TO COMMENT OUT STOCHASTIC TERMS
-	// phiavg = 0.;
+    // HACK TO COMMENT OUT STOCHASTIC TERMS
+    // phiavg = 0.;
 
         //fluxy(i,j,k,0) = 0.5*(phi(i,j,k,0)-phi(i,j-1,k,0)) * dyinv
-	//+ stochfluxy(i,j,k)* std::sqrt(phiavg);
+    //+ stochfluxy(i,j,k)* std::sqrt(phiavg);
 
         fluxy(i,j,k,0) = 0.5*(phip-phim) * dyinv;
 
@@ -998,7 +1017,7 @@ void compute_flux_y (int i, int j, int k,
 
              amrex::Real yloc;
              yloc = j / dyinv;
-	     amrex::Real phiavg = 0.5*(phip+phim);
+         amrex::Real phiavg = 0.5*(phip+phim);
 
              amrex::Real Vsuby;
 
@@ -1012,9 +1031,9 @@ void compute_flux_y (int i, int j, int k,
            fluxy(i,j,k,1) = fluxy(i,j,k,0);
         }
 
-	amrex::Real sqphiavg = 0.5*(std::sqrt(phipn)+std::sqrt(phimn));
+    amrex::Real sqphiavg = 0.5*(std::sqrt(phipn)+std::sqrt(phimn));
 
-	fluxy(i,j,k,0) += stofact * stochfluxy(i,j,k)* sqphiavg;
+    fluxy(i,j,k,0) += stofact * stochfluxy(i,j,k)* sqphiavg;
 //        amrex::Print() << " y flux " << i << " " << j << " " << fluxy(i,j,k,0) << std::endl;
 }
 
@@ -1028,44 +1047,40 @@ void compute_flux_z (int i, int j, int k,
                      amrex::Array4<amrex::Real const> const& phi, amrex::Real dzinv,
                      int lo, int hi, int dom_lo, int dom_hi, int bc_lo, int bc_hi, int Ncomp)
 {
+    amrex::ignore_unused(lo, hi);
     int coeff_index = Ncomp-1;
-    if (lo == dom_lo &&
+    // Note: the test has to be on the face index k, not on the box bounds lo/hi,
+    // otherwise every face of a box that touches the domain boundary is treated
+    // as a boundary face.
+    if (k == dom_lo &&
         (bc_lo == amrex::BCType::foextrap ||
          bc_lo == amrex::BCType::ext_dir))
     {
-        if(k == lo)
-        {
-            fluxz(i,j,k,0) = 0.5*(phi(i,j,k,0)-phi(i,j,k-1,0)) * dzinv / 0.5;
-        }
-        else
-        {
-            fluxz(i,j,k,0) = 0.5*(phi(i,j,k,0)-phi(i,j,k-1,0)) * dzinv;
+        fluxz(i,j,k,0) = 0.5*(phi(i,j,k,0)-phi(i,j,k-1,0)) * dzinv / 0.5;
+        if(Ncomp == 2){
+            fluxz(i,j,k,1) = 0.5*(phi(i,j,k,1)-phi(i,j,k-1,1)) * dzinv / 0.5;
         }
     }
-    else if (hi == dom_hi &&
+    else if (k == dom_hi+1 &&
              (bc_hi == amrex::BCType::foextrap ||
               bc_hi == amrex::BCType::ext_dir))
     {
-        if(k == hi+1)
-        {
-            fluxz(i,j,k,0) = 0.5*(phi(i,j,k,0)-phi(i,j,k-1,0)) * dzinv / 0.5;
-        }
-        else
-        {
-            fluxz(i,j,k,0) = 0.5*(phi(i,j,k,0)-phi(i,j,k-1,0)) * dzinv;
+        fluxz(i,j,k,0) = 0.5*(phi(i,j,k,0)-phi(i,j,k-1,0)) * dzinv / 0.5;
+        if(Ncomp == 2){
+            fluxz(i,j,k,1) = 0.5*(phi(i,j,k,1)-phi(i,j,k-1,1)) * dzinv / 0.5;
         }
     }
     else
     {
-//	amrex::Real phiavg = 2.*(phi(i,j,k)*phi(i,j,k-1))/(phi(i,j,k)+phi(i,j,k-1)+1.e-16);
+//    amrex::Real phiavg = 2.*(phi(i,j,k)*phi(i,j,k-1))/(phi(i,j,k)+phi(i,j,k-1)+1.e-16);
         amrex::Real phip = std::max(phi(i,j,k,coeff_index),0.);
         amrex::Real phim = std::max(phi(i,j,k-1,coeff_index),0.);
-	//amrex::Real phiavg = 2.*(phip*phim)/(phip+phim+1.e-16);
+    //amrex::Real phiavg = 2.*(phip*phim)/(phip+phim+1.e-16);
         //fluxz(i,j,k,0) = 0.5*(phi(i,j,k,0)-phi(i,j,k-1,0)) * dzinv
-	// +stochfluxz(i,j,k) * std::sqrt(phiavg);
-	amrex::Real sqphiavg = 0.5*(std::sqrt(phip)+std::sqrt(phim));
+    // +stochfluxz(i,j,k) * std::sqrt(phiavg);
+    amrex::Real sqphiavg = 0.5*(std::sqrt(phip)+std::sqrt(phim));
         fluxz(i,j,k,0) = 0.5*(phi(i,j,k,0)-phi(i,j,k-1,0)) * dzinv
-	 +stochfluxz(i,j,k) * sqphiavg;
+     +stochfluxz(i,j,k) * sqphiavg;
         if(Ncomp == 2){
            fluxz(i,j,k,1) = 0.5*(phi(i,j,k,1)-phi(i,j,k-1,1)) * dzinv;
         }
@@ -1107,7 +1122,10 @@ void update_phi (int i, int j, int k,
        }
     } else if (num_flux == 4 ){
 
-       phinew(i,j,k,0) = phiold(i,j,k,0)
+       // The conserved quantity on the moving surface is phi*sqrt(g), so the
+       // update is phi^{n+1} sqrt(g^{n+1}) = phi^n sqrt(g^n) + dt*div(F), the
+       // same form the num_flux == 1 branch above uses.
+       phinew(i,j,k,0) = (det(i,j,k,1)*phiold(i,j,k,0)
            + 0.25* dt* (  dxinv * (fluxx(i+1,j  ,k,0  ) - fluxx(i,j,k,0))
                        +  dxinv * (fluxx(i+1,j  ,k,1  ) - fluxx(i,j,k,1))
                        +  dxinv * (fluxx(i+1,j  ,k,2  ) - fluxx(i,j,k,2))
@@ -1115,7 +1133,7 @@ void update_phi (int i, int j, int k,
                        +  dyinv * (fluxy(i  ,j+1,k,0  ) - fluxy(i,j,k,0))
                        +  dyinv * (fluxy(i  ,j+1,k,1  ) - fluxy(i,j,k,1))
                        +  dyinv * (fluxy(i  ,j+1,k,2  ) - fluxy(i,j,k,2))
-                       +  dyinv * (fluxy(i  ,j+1,k,3  ) - fluxy(i,j,k,3)))/det(i,j,k,1);
+                       +  dyinv * (fluxy(i  ,j+1,k,3  ) - fluxy(i,j,k,3))))/detn(i,j,k,1);
 
 
     }

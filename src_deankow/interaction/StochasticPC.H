@@ -3,6 +3,8 @@
 
 #include <AMReX_NeighborParticles.H>
 
+#include "Potentials.H"
+
 struct RealIdx
 {
     enum {
@@ -66,21 +68,20 @@ public:
         , m_neighbor_cells(neighbor_cells)
         {}
 
-    void InitParticles (amrex::MultiFab& phi_fine, amrex::Real num_part);
+    void InitParticles (amrex::MultiFab& phi_fine, amrex::Real num_part,
+                        PotentialParams const& pot);
     void  AddParticles (amrex::MultiFab& phi_fine, const amrex::BoxArray& ba_to_exclude,
-                        amrex::Real factor, amrex::Real num_part);
+                        amrex::Real factor, amrex::Real num_part,
+                        PotentialParams const& pot);
 
     void ColorParticlesWithPhi (amrex::MultiFab const& phi_fine);
 
     void AdvectParticles (int lev, amrex::Real dt,
-                                  amrex::Real interaction_range,
-                                  amrex::Real interaction_strength,
-                                  amrex::Real interaction_scale,
-                                  amrex::Real num_part,
-                                  amrex::Real diff_coeff,
-                                  int use_ext_pot,
-                                  bool eval_current,
-                                  amrex::Array<amrex::MultiFab, AMREX_SPACEDIM>& integrated_current);
+                          PotentialParams const& pot,
+                          amrex::Real num_part,
+                          amrex::Real diff_coeff,
+                          bool eval_current,
+                          amrex::Array<amrex::MultiFab, AMREX_SPACEDIM>& integrated_current);
 
     void AdvectWithRandomWalk (int lev, amrex::Real dt, amrex::Real diff_coeff);
 
