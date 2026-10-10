@@ -206,8 +206,9 @@ struct ParticleData {
                                            amrex::IntVect::TheDimensionVector(idim));
                 integrated_current_grown[idim].define(face_ba,
                                                       stochastic_particles->ParticleDistributionMap(1),
-                                                      integrated_current[idim].nComp(), 0);
-                integrated_current_grown[idim].setVal(amrex::Real(0.));
+                                                      integrated_current[idim].nComp(), 1);
+                integrated_current_grown[idim].setVal(
+                    amrex::Real(0.), 0, integrated_current[idim].nComp(), 1);
                 integrated_current[idim].setVal(amrex::Real(0.));
             }
             phi_crse_old.FillBoundary(geom_fine.periodicity());

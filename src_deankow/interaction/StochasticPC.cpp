@@ -942,31 +942,72 @@ StochasticPC::AdvectParticles (int lev, Real dt,
             new_cell += domain.smallEnd();
 
             if (eval_current) {
+                const Real displacement[3] = {totalx, totaly, totalz};
+                int crossing_axis[3];
+                int crossing_sign[3];
+                Real crossing_time[3];
+                int ncross = 0;
+
+                // Sort crossed faces by their intersection time along the
+                // straight particle trajectory.  Depositing them in this
+                // order makes the face current a connected path from
+                // old_cell to new_cell, including diagonal moves.
+                for (int idim = 0; idim < AMREX_SPACEDIM; ++idim) {
+                    if (new_cell[idim] == old_cell[idim]) {
+                        continue;
+                    }
+
+                    const int sign = (new_cell[idim] > old_cell[idim]) ? 1 : -1;
+                    const int face_index = old_cell[idim] + (sign > 0 ? 1 : 0);
+                    const Real face_position =
+                        p_lo[idim]
+                        + (face_index - domain.smallEnd(idim)) * dx[idim];
+                    const Real time =
+                        (face_position - p.rdata(RealIdx::xold + idim))
+                        / displacement[idim];
+
+                    int insert = ncross;
+                    while (insert > 0 && time < crossing_time[insert-1]) {
+                        crossing_axis[insert] = crossing_axis[insert-1];
+                        crossing_sign[insert] = crossing_sign[insert-1];
+                        crossing_time[insert] = crossing_time[insert-1];
+                        --insert;
+                    }
+                    crossing_axis[insert] = idim;
+                    crossing_sign[insert] = sign;
+                    crossing_time[insert] = time;
+                    ++ncross;
+                }
+
+                IntVect path_cell = old_cell;
+                for (int crossing = 0; crossing < ncross; ++crossing) {
+                    const int idim = crossing_axis[crossing];
+                    const int sign = crossing_sign[crossing];
+                    const int face_index =
+                        path_cell[idim] + (sign > 0 ? 1 : 0);
 #if (AMREX_SPACEDIM == 2)
-                const int old_k = 0;
+                    const int path_k = 0;
 #else
-                const int old_k = old_cell[2];
+                    const int path_k = path_cell[2];
 #endif
 
-                if (new_cell[0] > old_cell[0]) {
-                    Gpu::Atomic::AddNoRet(&current_x(old_cell[0]+1, old_cell[1], old_k, 0), Real(1.0));
-                } else if (new_cell[0] < old_cell[0]) {
-                    Gpu::Atomic::AddNoRet(&current_x(old_cell[0], old_cell[1], old_k, 0), Real(-1.0));
-                }
-
-                if (new_cell[1] > old_cell[1]) {
-                    Gpu::Atomic::AddNoRet(&current_y(old_cell[0], old_cell[1]+1, old_k, 0), Real(1.0));
-                } else if (new_cell[1] < old_cell[1]) {
-                    Gpu::Atomic::AddNoRet(&current_y(old_cell[0], old_cell[1], old_k, 0), Real(-1.0));
-                }
-
+                    if (idim == 0) {
+                        Gpu::Atomic::AddNoRet(
+                            &current_x(face_index, path_cell[1], path_k, 0),
+                            Real(sign));
+                    } else if (idim == 1) {
+                        Gpu::Atomic::AddNoRet(
+                            &current_y(path_cell[0], face_index, path_k, 0),
+                            Real(sign));
 #if (AMREX_SPACEDIM == 3)
-                if (new_cell[2] > old_cell[2]) {
-                    Gpu::Atomic::AddNoRet(&current_z(old_cell[0], old_cell[1], old_cell[2]+1, 0), Real(1.0));
-                } else if (new_cell[2] < old_cell[2]) {
-                    Gpu::Atomic::AddNoRet(&current_z(old_cell[0], old_cell[1], old_cell[2], 0), Real(-1.0));
-                }
+                    } else {
+                        Gpu::Atomic::AddNoRet(
+                            &current_z(path_cell[0], path_cell[1], face_index, 0),
+                            Real(sign));
 #endif
+                    }
+                    path_cell[idim] += sign;
+                }
             }
 
             if (is_periodic_in_x) {

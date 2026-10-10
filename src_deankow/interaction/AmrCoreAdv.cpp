@@ -1094,6 +1094,8 @@ AmrCoreAdv::ReadParameters ( amrex::Vector<int>& bc_lo, amrex::Vector<int>& bc_h
         pp.query("cfl", cfl);
         pp.query("do_reflux", do_reflux);
         pp.query("do_subcycle", do_subcycle);
+        // This is added to run simulations at fixed timestep
+        pp.query("max_dt", m_max_dt);
     }
 
     read_potential_params(pot);
@@ -1365,6 +1367,9 @@ AmrCoreAdv::ComputeDt ()
         dt_0 = std::min(dt_0, n_factor*dt_tmp[lev]);
     }
 
+    // Ensure dt_0 is less that prescribed max_dt
+    dt_0 = std::min(dt_0, m_max_dt);
+
     // Limit dt's by the value of stop_time.
     const Real eps = 1.e-3*dt_0;
 
@@ -1578,6 +1583,8 @@ AmrCoreAdv::WriteCurrentAsciiFile (const std::string& a_fname) const
         if (!ofs.good()) {
             amrex::FileOpenFailed(a_fname);
         }
+        ofs << std::setprecision(17);
+        ofs << "# total_particle_count: " << num_part << "\n";
         ofs << "# cell rows: cell lev i j k phi_old phi_new\n";
         ofs << "# face rows: face lev dir i j k integrated_current\n";
     }

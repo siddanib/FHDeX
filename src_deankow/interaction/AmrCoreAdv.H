@@ -235,6 +235,9 @@ private:
     // see EstTimeStep
     amrex::Real cfl = 0.7;
 
+    // Variable added to run a simulation at fixed time step
+    amrex::Real m_max_dt = amrex::Real(1.0e+30);
+
     // how often each level regrids the higher levels of refinement
     // (after a level advances that many time steps)
     int regrid_int = 2;
