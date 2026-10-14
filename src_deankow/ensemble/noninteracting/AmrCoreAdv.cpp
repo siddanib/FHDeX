@@ -1198,11 +1198,13 @@ AmrCoreAdv::ReadParameters ( amrex::Vector<int>& bc_lo, amrex::Vector<int>& bc_h
         pp.query("ml_output_std_fctr", m_ml_output_std_fctr);
         m_quantize_ml_output = false;
         pp.query("quantize_ml_output", m_quantize_ml_output);
-        // When restarting from a non-ML checkpoint, copy the particle number
-        // density (phi comp 1) into the ML density field (phi comp 0) so the
-        // ML model starts from particle data rather than the Gaussian solution.
+        // On restart, copy the particle number density (phi comp 1) into the
+        // SPDE density field (phi comp 0) so the continuum solver (Gaussian or
+        // ML) starts from particle data rather than the checkpointed solution.
+        // For flux_mode = ml this is only valid from a non-ML checkpoint.
         m_ml_init_from_particle_ic = false;
         pp.query("ml_init_from_particle_ic", m_ml_init_from_particle_ic);
+        pp.query("init_from_particle_ic", m_ml_init_from_particle_ic);
         if (m_ml_t_df <= 0.0) {
             amrex::Abort("ml_t_df must be > 0.");
         }
@@ -2285,13 +2287,14 @@ AmrCoreAdv::ReadCheckpointFile ()
     for (int lev = 0; lev <= finest_level; ++lev) {
         VisMF::Read(phi_new[lev],
                     amrex::MultiFabFileFullPrefix(lev, restart_chkfile, "Level_", "phi"));
-        // Overwrite the ML density field (comp 0) with particle number density
-        // (comp 1) so the ML model's initial condition reflects the particle
-        // solution rather than the Gaussian diffusion solution from the checkpoint.
-        // Abort if restarting from an ML checkpoint: phi_hist and flux_hist are
+        // Overwrite the SPDE density field (comp 0) with particle number density
+        // (comp 1) so the continuum solver's initial condition reflects the
+        // particle solution rather than the solution stored in the checkpoint.
+        // Applies to both flux_mode = gaussian and flux_mode = ml. For ML, abort
+        // if restarting from an ML checkpoint: phi_hist and flux_hist are
         // already populated, so overriding comp 0 here would be inconsistent.
-        if (m_flux_mode == FluxMode::ml && m_ml_init_from_particle_ic) {
-            if (has_ml_header) {
+        if (m_ml_init_from_particle_ic) {
+            if (m_flux_mode == FluxMode::ml && has_ml_header) {
                 amrex::Abort("ml_init_from_particle_ic is only valid when restarting "
                              "from a non-ML checkpoint. The restart file already "
                              "contains ML history data.");
